@@ -30,7 +30,9 @@ def verify_push(lines):
         local_ref, sha, remote_ref, _remote_sha = line.split()
         if sha == ZERO:  # deleting a ref sends no new code
             continue
-        if not local_ref.startswith('refs/heads/') or not remote_ref.startswith('refs/heads/'):
+        if local_ref != 'HEAD' and not local_ref.startswith('refs/heads/'):
+            raise ValueError('Only branch pushes are supported by this review gate.')
+        if not remote_ref.startswith('refs/heads/'):
             raise ValueError('Only branch pushes are supported by this review gate.')
         if remote_ref == 'refs/heads/main':
             raise ValueError('Push a feature branch and open a PR; direct push to main is blocked.')

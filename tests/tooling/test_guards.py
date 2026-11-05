@@ -41,6 +41,10 @@ class ReviewGateTests(unittest.TestCase):
         with patch.object(review, 'verify_record', return_value=True):
             review.verify_push([f'refs/heads/work {SHA} refs/heads/work {review.ZERO}'])
 
+    def test_head_refspec_passes_when_reviewed(self):
+        with patch.object(review, 'verify_record', return_value=True):
+            review.verify_push([f'HEAD {SHA} refs/heads/work {review.ZERO}'])
+
     def test_delete_does_not_need_review(self):
         review.verify_push([f'(delete) {review.ZERO} refs/heads/old {SHA}'])
 
