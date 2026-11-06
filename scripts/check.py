@@ -39,7 +39,17 @@ def main():
     subprocess.run(['git', 'diff', '--check'], cwd=ROOT, check=True)
     subprocess.run(['git', 'diff', '--cached', '--check'], cwd=ROOT, check=True)
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/tooling', '-v'], cwd=ROOT, check=True)
-    print('Repository checks passed. Application tests are not configured yet.')
+    backend = ROOT / 'backend'
+    python = backend / '.venv' / 'bin' / 'python'
+    if backend.exists():
+        if not python.exists():
+            sys.exit('Run uv sync --project backend --frozen first.')
+        for args in [('ruff', 'check', '.'), ('ruff', 'format', '--check', '.'), ('mypy', 'app'), ('pytest',)]:
+            subprocess.run([str(python), '-m', *args], cwd=backend, check=True)
+    if (ROOT / 'frontend').exists():
+        for task in ('lint', 'typecheck', 'test', 'build'):
+            subprocess.run(['npm', 'run', task], cwd=ROOT / 'frontend', check=True)
+    print('Repository and application checks passed.')
 
 
 if __name__ == '__main__':
