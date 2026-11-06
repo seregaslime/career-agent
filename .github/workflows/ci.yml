@@ -1,0 +1,90 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, 'codex/**', 'feature/**', 'fix/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  repository-checks:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: career
+          POSTGRES_PASSWORD: test_only
+          POSTGRES_DB: career_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U career -d career_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://career:test_only@localhost:5432/career_test
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - run: pip install uv==0.11.27
+      - run: uv sync --project backend --frozen
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend
+      - run: python scripts/check.py
+
+  deploy:
+    name: Deploy production
+    needs: repository-checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Validate deployment configuration
+        run: |
+          for name in RENDER_API_KEY RENDER_SERVICE_ID CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_PAGES_PROJECT VITE_API_BASE_URL; do
+            if [ -z "${!name}" ]; then echo "Missing deployment setting: $name"; exit 1; fi
+          done
+      - name: Deploy tested backend commit
+        run: python scripts/deploy_render.py
+      - name: Verify backend and database
+        run: curl --fail --retry 12 --retry-all-errors --retry-delay 5 --max-time 30 "$VITE_API_BASE_URL/api/ready"
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
+      - name: Publish frontend
+        working-directory: frontend
+        run: npx wrangler pages deploy dist --project-name "$CLOUDFLARE_PAGES_PROJECT" --branch main --commit-hash "$GITHUB_SHA"
