@@ -38,6 +38,8 @@ it('shows login for an anonymous visitor and reports invalid credentials', async
   vi.stubGlobal('fetch', fetch);
   render(<ProfilePage />);
   await screen.findByRole('heading', { name: 'Вход' });
+  expect(screen.getByLabelText('Пароль')).toHaveAttribute('minlength', '8');
+  expect(screen.getByLabelText('Пароль')).toHaveAttribute('maxlength', '128');
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'student@example.com' } });
   fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: 'synthetic-password' } });
   fetch.mockImplementation(() => json({ detail: 'Неверный email или пароль' }, 401));

@@ -23,7 +23,7 @@ DUMMY_HASH = hash_password("not-a-real-password")
 class Credentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(min_length=3, max_length=254)
-    password: str = Field(min_length=12, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
 
     @field_validator("email")
     @classmethod
