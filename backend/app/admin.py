@@ -27,6 +27,7 @@ class AdminUser(BaseModel):
     id: str
     email: str
     is_admin: bool
+    is_super_admin: bool
     is_blocked: bool
 
 
@@ -47,6 +48,33 @@ class BlockChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     blocked: bool
     reason: str = Field(min_length=3, max_length=500)
+
+
+class RoleChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    is_admin: bool
+    reason: str = Field(min_length=3, max_length=500)
+
+
+def lock_users(session: DB, admin: User, user_id: str) -> tuple[User, User]:
+    # Refresh privileges under locks; sorted order avoids cross-moderation deadlocks.
+    users = {
+        user.id: user
+        for user in session.scalars(
+            select(User)
+            .where(User.id.in_([admin.id, user_id]))
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    }
+    actor = users.get(admin.id)
+    if actor is None or actor.is_blocked or not actor.is_admin:
+        raise HTTPException(403, "Требуются права администратора")
+    target = users.get(user_id)
+    if target is None:
+        raise HTTPException(404, "Пользователь не найден")
+    return actor, target
 
 
 class EventOut(BaseModel):
@@ -114,12 +142,9 @@ def change_block(
     response.headers["Cache-Control"] = "no-store"
     if len(data.reason.strip()) < 3:
         raise HTTPException(422, "Укажите причину изменения")
-    # Serializes status changes with login to prevent sessions minted after a block.
-    user = session.scalar(select(User).where(User.id == user_id).with_for_update())
-    if user is None:
-        raise HTTPException(404, "Пользователь не найден")
-    if data.blocked and user.is_admin:
-        raise HTTPException(409, "Нельзя заблокировать администратора")
+    admin, user = lock_users(session, admin, user_id)
+    if user.is_super_admin or (data.blocked and user.id == admin.id):
+        raise HTTPException(409, "Нельзя заблокировать суперадминистратора или самого себя")
     if user.is_blocked != data.blocked:
         user.is_blocked = data.blocked
         if data.blocked:
@@ -130,6 +155,38 @@ def change_block(
                 actor_id=admin.id,
                 target_id=user_id,
                 action="block" if data.blocked else "unblock",
+                reason=data.reason.strip(),
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+        session.refresh(user)
+    return user
+
+
+@router.patch("/users/{user_id}/role", response_model=AdminUser)
+def change_role(
+    user_id: str, data: RoleChange, admin: Admin, session: DB, response: Response
+) -> User:
+    response.headers["Cache-Control"] = "no-store"
+    admin, user = lock_users(session, admin, user_id)
+    if not admin.is_super_admin:
+        raise HTTPException(403, "Назначать администраторов может только суперадминистратор")
+    if len(data.reason.strip()) < 3:
+        raise HTTPException(422, "Укажите причину изменения")
+    if user.is_super_admin:
+        raise HTTPException(409, "Роль суперадминистратора защищена")
+    if user.is_blocked and data.is_admin:
+        raise HTTPException(409, "Сначала разблокируйте пользователя")
+    if user.is_admin != data.is_admin:
+        user.is_admin = data.is_admin
+        session.execute(delete(LoginSession).where(LoginSession.user_id == user_id))
+        session.add(
+            AdminEvent(
+                id=str(uuid4()),
+                actor_id=admin.id,
+                target_id=user_id,
+                action="grant_admin" if data.is_admin else "revoke_admin",
                 reason=data.reason.strip(),
                 created_at=datetime.now(UTC),
             )

@@ -42,6 +42,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     is_admin: bool
+    is_super_admin: bool
 
 
 class ProfileData(BaseModel):

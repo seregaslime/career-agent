@@ -31,6 +31,7 @@ it('allows an admin to inspect and block a user with a reason', async () => {
   render(<MemoryRouter><AdminPage /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: 'Открыть member@example.com' }));
   await screen.findByText('Студент');
+  expect(screen.queryByRole('button', { name: 'Назначить администратором' })).not.toBeInTheDocument();
   const block = screen.getByRole('button', { name: 'Заблокировать пользователя' });
   expect(block).toBeDisabled();
   fireEvent.change(screen.getByLabelText('Причина изменения'), { target: { value: 'Synthetic test' } });
@@ -38,4 +39,44 @@ it('allows an admin to inspect and block a user with a reason', async () => {
   await screen.findByText('Статус пользователя обновлён');
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/admin/users/member-id/block', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ blocked: true, reason: 'Synthetic test' }) })));
   expect(screen.getByRole('button', { name: 'Разблокировать пользователя' })).toBeDisabled();
+});
+
+it('allows only the superadmin to delegate and revoke admin rights', async () => {
+  let isAdmin = false;
+  const user = () => ({ id: 'member-id', email: 'member@example.com', is_admin: isAdmin, is_super_admin: false, is_blocked: false });
+  const fetch = vi.fn((url: string, options?: RequestInit) => {
+    if (url.endsWith('/auth/me')) return json({ id: 'owner-id', is_admin: true, is_super_admin: true });
+    if (url.endsWith('/events')) return json([]);
+    if (url.endsWith('/role')) { isAdmin = JSON.parse(options?.body as string).is_admin; return json(user()); }
+    if (url.endsWith('/users/member-id')) return json({ user: user(), profile: null, active_sessions: 0 });
+    return json({ items: [user()], total: 1, offset: 0, limit: 20 });
+  });
+  vi.stubGlobal('fetch', fetch);
+  render(<MemoryRouter><AdminPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Открыть member@example.com' }));
+  const grant = await screen.findByRole('button', { name: 'Назначить администратором' });
+  expect(grant).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Причина изменения'), { target: { value: 'Делегирование модерации' } });
+  fireEvent.click(grant);
+  await screen.findByText('Роль обновлена. Пользователю нужно войти заново.');
+  expect(fetch).toHaveBeenCalledWith('/api/admin/users/member-id/role', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ is_admin: true, reason: 'Делегирование модерации' }) }));
+  fireEvent.change(screen.getByLabelText('Причина изменения'), { target: { value: 'Снятие роли' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Снять права администратора' }));
+  await screen.findByRole('button', { name: 'Назначить администратором' });
+});
+
+it('protects the superadmin and hides role changes from regular admins', async () => {
+  const user = { id: 'owner-id', email: 'owner@example.com', is_admin: true, is_super_admin: true, is_blocked: false };
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    if (url.endsWith('/auth/me')) return json({ id: 'delegate-id', is_admin: true, is_super_admin: false });
+    if (url.endsWith('/events')) return json([]);
+    if (url.endsWith('/users/owner-id')) return json({ user, profile: null, active_sessions: 1 });
+    return json({ items: [user], total: 1, offset: 0, limit: 20 });
+  }));
+  render(<MemoryRouter><AdminPage /></MemoryRouter>);
+  await screen.findByText('Суперадминистратор');
+  fireEvent.click(screen.getByRole('button', { name: 'Открыть owner@example.com' }));
+  await screen.findByText('Суперадминистратор защищён. Блокировка самого себя недоступна.');
+  expect(screen.queryByRole('button', { name: 'Заблокировать пользователя' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Снять права администратора' })).not.toBeInTheDocument();
 });
