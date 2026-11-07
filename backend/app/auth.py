@@ -41,6 +41,7 @@ class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     email: str
+    is_admin: bool
 
 
 class ProfileData(BaseModel):
@@ -86,7 +87,7 @@ def current_user(request: Request, session: DB) -> User:
     if record is None or record.expires_at <= datetime.now(UTC):
         raise HTTPException(401, "Войдите в аккаунт")
     user = session.get(User, record.user_id)
-    if user is None:
+    if user is None or user.is_blocked:
         raise HTTPException(401, "Войдите в аккаунт")
     return user
 
@@ -146,9 +147,9 @@ def login(data: Credentials, request: Request, response: Response, session: DB) 
     from sqlalchemy import select
 
     limit_auth(request, data.email)
-    user = session.scalar(select(User).where(User.email == data.email))
+    user = session.scalar(select(User).where(User.email == data.email).with_for_update())
     valid = verify_password(data.password, user.password_hash if user else DUMMY_HASH)
-    if user is None or not valid:
+    if user is None or not valid or user.is_blocked:
         raise HTTPException(401, "Неверный email или пароль")
     issue_session(request, response, session, user)
     return user

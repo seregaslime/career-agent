@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 interface Profile { full_name: string; target_role: string; education: string; about: string }
 const empty: Profile = { full_name: '', target_role: '', education: '', about: '' };
@@ -17,6 +18,7 @@ async function api(path: string, method = 'GET', body?: object) {
 
 export function ProfilePage() {
   const [user, setUser] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -31,7 +33,7 @@ export function ProfilePage() {
       if (!response.ok) throw new Error('Не удалось проверить вход. Повторите позже.');
       const current = await response.json();
       const saved = await api('/profile');
-      if (active) { setProfile(saved); setUser(current.email); }
+      if (active) { setProfile(saved); setUser(current.email); setIsAdmin(current.is_admin === true); }
     }).catch(error => { if (active) setMessage(String(error.message)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -43,7 +45,7 @@ export function ProfilePage() {
       const current = await api('/auth/' + mode, 'POST', { email, password });
       setPassword('');
       const saved = await api('/profile');
-      setProfile(saved); setUser(current.email);
+      setProfile(saved); setUser(current.email); setIsAdmin(current.is_admin === true);
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка подключения'); }
     finally { setBusy(false); }
   }
@@ -55,7 +57,7 @@ export function ProfilePage() {
   }
   async function logout() {
     setBusy(true); setMessage('');
-    try { await api('/auth/logout', 'POST'); setUser(null); setProfile(empty); }
+    try { await api('/auth/logout', 'POST'); setUser(null); setProfile(empty); setIsAdmin(false); }
     catch { setMessage('Не удалось выйти. Повторите попытку.'); }
     finally { setBusy(false); }
   }
@@ -63,7 +65,7 @@ export function ProfilePage() {
   return <section className="placeholder profile-page"><span className="eyebrow">ЛИЧНОЕ ПРОСТРАНСТВО</span>
     <h1>{user ? 'Ваш профиль' : mode === 'login' ? 'Вход' : 'Создать аккаунт'}</h1>
     {message && <p role="status">{message}</p>}
-    {user ? <><p>{user}</p><form onSubmit={save}>
+    {user ? <><p>{user}</p>{isAdmin && <Link className="button secondary" to="/admin">Панель администратора</Link>}<form onSubmit={save}>
       <label>Имя<input value={profile.full_name} maxLength={120} onChange={e => setProfile({ ...profile, full_name: e.target.value })} /></label>
       <label>Желаемая должность<input value={profile.target_role} maxLength={120} onChange={e => setProfile({ ...profile, target_role: e.target.value })} /></label>
       <label>Образование<textarea value={profile.education} maxLength={3000} onChange={e => setProfile({ ...profile, education: e.target.value })} /></label>
