@@ -5,11 +5,11 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import AuthLimiter
+from app.auth import AuthLimiter, Credentials
 from app.config import Settings
 from app.db import make_engine
 from app.main import create_app
@@ -57,7 +57,7 @@ def test_accounts_profile_isolation_and_session_lifecycle() -> None:
     app = create_app(settings)
     a_email = f"a-{uuid4()}@example.com"
     b_email = f"b-{uuid4()}@example.com"
-    password = "synthetic-password-123"
+    password = "Syn!8pwd"
     with (
         TestClient(app, base_url="https://testserver") as a,
         TestClient(app, base_url="https://testserver") as b,
@@ -117,3 +117,13 @@ def test_accounts_profile_isolation_and_session_lifecycle() -> None:
             assert a.get("/api/auth/me").status_code == 401
         finally:
             engine.dispose()
+
+
+@pytest.mark.parametrize("length,accepted", [(7, False), (8, True), (128, True), (129, False)])
+def test_password_length_boundaries(length: int, accepted: bool) -> None:
+    data = {"email": "synthetic@example.com", "password": "x" * length}
+    if accepted:
+        assert len(Credentials(**data).password) == length
+    else:
+        with pytest.raises(ValidationError):
+            Credentials(**data)

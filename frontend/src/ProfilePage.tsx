@@ -101,8 +101,8 @@ export function ProfilePage() {
     </form><button className="button secondary" disabled={busy} onClick={() => void logout()}>Выйти</button></> : <>
       <form onSubmit={authenticate}>
         <label>Email<input type="email" autoComplete="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></label>
-        <label>Пароль<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength={12} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} /></label>
-        <small>От 12 до 128 символов. Для учебной версии используйте отдельный пароль.</small>
+        <label>Пароль<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength={8} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} /></label>
+        <small>От 8 до 128 символов. Для учебной версии используйте отдельный пароль.</small>
         <button className="button" disabled={busy}>{busy ? 'Подождите…' : mode === 'login' ? 'Войти' : 'Зарегистрироваться'}</button>
       </form>
       <button className="button secondary" disabled={busy} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setMessage(''); setPassword(''); }}>{mode === 'login' ? 'Создать аккаунт' : 'Уже есть аккаунт'}</button>
