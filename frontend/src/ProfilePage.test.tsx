@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { ProfilePage } from './ProfilePage';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
@@ -11,7 +12,7 @@ it('waits through a cold start and opens login after the server wakes', async ()
     .mockImplementationOnce(() => Promise.reject(new TypeError('Failed to fetch')))
     .mockImplementation(() => json({}, 401));
   vi.stubGlobal('fetch', fetch);
-  render(<ProfilePage />);
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   expect(screen.getByText(/Ожидаем ответа сервера/)).toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
@@ -23,7 +24,7 @@ it('stops retrying an unavailable server and allows a manual retry', async () =>
   vi.useFakeTimers();
   const fetch = vi.fn().mockImplementation(() => json({}, 502));
   vi.stubGlobal('fetch', fetch);
-  render(<ProfilePage />);
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
   await act(async () => { await vi.advanceTimersByTimeAsync(70000); });
   expect(screen.getByText('Сервер пока недоступен. Повторите проверку входа.')).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(8);
@@ -36,7 +37,7 @@ it('stops retrying an unavailable server and allows a manual retry', async () =>
 it('shows login for an anonymous visitor and reports invalid credentials', async () => {
   const fetch = vi.fn().mockImplementation(() => json({}, 401));
   vi.stubGlobal('fetch', fetch);
-  render(<ProfilePage />);
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
   await screen.findByRole('heading', { name: 'Вход' });
   expect(screen.getByLabelText('Пароль')).toHaveAttribute('minlength', '8');
   expect(screen.getByLabelText('Пароль')).toHaveAttribute('maxlength', '128');
@@ -55,7 +56,7 @@ it('loads and saves the authenticated profile', async () => {
     return json(profile);
   });
   vi.stubGlobal('fetch', fetch);
-  render(<ProfilePage />);
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
   await screen.findByDisplayValue('Студент');
   fireEvent.change(screen.getByLabelText('Желаемая должность'), { target: { value: 'Python' } });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить профиль' }));
@@ -70,9 +71,26 @@ it('does not expose an old profile after logout', async () => {
   vi.stubGlobal('fetch', vi.fn((url: string) => url.endsWith('/me')
     ? json({ email: 'student@example.com' }) : url.endsWith('/logout') ? json({}, 204)
     : json({ full_name: 'Студент', target_role: '', education: '', about: '' })));
-  render(<ProfilePage />);
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
   await screen.findByDisplayValue('Студент');
   fireEvent.click(screen.getByRole('button', { name: 'Выйти' }));
   await screen.findByRole('heading', { name: 'Вход' });
   expect(screen.queryByDisplayValue('Студент')).not.toBeInTheDocument();
+});
+
+
+it('shows registration codes once before opening the profile', async () => {
+  vi.stubGlobal('fetch', vi.fn((url: string) => url.endsWith('/me') ? json({}, 401)
+    : url.endsWith('/register') ? json({ email: 'test@example.com', recovery_codes: ['ABCD-TEST-CODE'] }, 201)
+    : json({ full_name: '', target_role: '', education: '', about: '' })));
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать аккаунт' }));
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'test@example.com' } });
+  fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: 'synthetic-password' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Зарегистрироваться' }));
+  await screen.findByText('ABCD-TEST-CODE');
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: 'Готово' }));
+  await screen.findByRole('heading', { name: 'Ваш профиль' });
+  expect(screen.queryByText('ABCD-TEST-CODE')).not.toBeInTheDocument();
 });

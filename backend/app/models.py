@@ -49,3 +49,9 @@ class AdminEvent(Base):
     action: Mapped[str] = mapped_column(String(40))
     reason: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RecoveryCode(Base):
+    __tablename__ = "recovery_codes"
+    code_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
