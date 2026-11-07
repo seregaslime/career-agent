@@ -1,9 +1,37 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ProfilePage } from './ProfilePage';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 const json = (data: object, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => data });
+
+it('waits through a cold start and opens login after the server wakes', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn().mockImplementationOnce(() => json({}, 503))
+    .mockImplementationOnce(() => Promise.reject(new TypeError('Failed to fetch')))
+    .mockImplementation(() => json({}, 401));
+  vi.stubGlobal('fetch', fetch);
+  render(<ProfilePage />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText(/Ожидаем ответа сервера/)).toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+  expect(screen.getByRole('heading', { name: 'Вход' })).toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it('stops retrying an unavailable server and allows a manual retry', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn().mockImplementation(() => json({}, 502));
+  vi.stubGlobal('fetch', fetch);
+  render(<ProfilePage />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(70000); });
+  expect(screen.getByText('Сервер пока недоступен. Повторите проверку входа.')).toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledTimes(8);
+  fetch.mockImplementation(() => json({}, 401));
+  fireEvent.click(screen.getByRole('button', { name: 'Повторить проверку входа' }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.queryByText('Сервер пока недоступен. Повторите проверку входа.')).not.toBeInTheDocument();
+});
 
 it('shows login for an anonymous visitor and reports invalid credentials', async () => {
   const fetch = vi.fn().mockImplementation(() => json({}, 401));
