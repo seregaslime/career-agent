@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -10,10 +10,16 @@ class Base(DeclarativeBase):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "NOT is_super_admin OR (is_admin AND NOT is_blocked)", name="super_admin_protected"
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     email: Mapped[str] = mapped_column(String(254), unique=True)
     password_hash: Mapped[str] = mapped_column(Text)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 

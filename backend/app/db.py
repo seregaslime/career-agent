@@ -2,7 +2,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from app.config import Settings
 
-SCHEMA_VERSION = "0003_admin_users"
+SCHEMA_VERSION = "0004_super_admin"
 
 
 def make_engine(settings: Settings) -> Engine:
