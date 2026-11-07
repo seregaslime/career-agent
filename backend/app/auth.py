@@ -9,10 +9,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import LoginSession, Profile, User
+from app.models import LoginSession, Profile, RecoveryCode, User
 from app.security import hash_password, token_hash, verify_password
 
 router = APIRouter(prefix="/api")
@@ -43,6 +44,34 @@ class UserOut(BaseModel):
     email: str
     is_admin: bool
     is_super_admin: bool
+
+
+class RegistrationOut(UserOut):
+    recovery_codes: list[str]
+
+
+class RecoveryRequest(Credentials):
+    code: str = Field(min_length=1, max_length=100)
+
+
+class PasswordConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class CodesOut(BaseModel):
+    recovery_codes: list[str]
+
+
+def new_recovery_codes(session: Session, user_id: str) -> list[str]:
+    session.execute(delete(RecoveryCode).where(RecoveryCode.user_id == user_id))
+    codes = []
+    for _ in range(8):
+        raw = secrets.token_hex(16).upper()
+        code = "-".join(raw[i : i + 4] for i in range(0, len(raw), 4))
+        codes.append(code)
+        session.add(RecoveryCode(code_hash=token_hash(raw), user_id=user_id))
+    return codes
 
 
 class ProfileData(BaseModel):
@@ -128,8 +157,10 @@ def limit_auth(request: Request, email: str) -> None:
     request.app.state.auth_limiter.check("email:" + email)
 
 
-@router.post("/auth/register", response_model=UserOut, status_code=201)
-def register(data: Credentials, request: Request, response: Response, session: DB) -> User:
+@router.post("/auth/register", response_model=RegistrationOut, status_code=201)
+def register(
+    data: Credentials, request: Request, response: Response, session: DB
+) -> RegistrationOut:
     limit_auth(request, data.email)
     user = User(id=str(uuid4()), email=data.email, password_hash=hash_password(data.password))
     session.add(user)
@@ -139,8 +170,9 @@ def register(data: Credentials, request: Request, response: Response, session: D
         session.rollback()
         raise HTTPException(409, "Не удалось создать аккаунт с этим email") from None
     session.add(Profile(user_id=user.id))
+    codes = new_recovery_codes(session, user.id)
     issue_session(request, response, session, user)
-    return user
+    return RegistrationOut(**UserOut.model_validate(user).model_dump(), recovery_codes=codes)
 
 
 @router.post("/auth/login", response_model=UserOut)
@@ -201,3 +233,54 @@ def update_profile(
     session.refresh(profile)
     response.headers["Cache-Control"] = "no-store"
     return profile
+
+
+@router.post("/auth/recovery-codes", response_model=CodesOut)
+def rotate_codes(
+    data: PasswordConfirmation,
+    request: Request,
+    response: Response,
+    current: CurrentUser,
+    session: DB,
+) -> CodesOut:
+    limit_auth(request, current.email)
+    user = session.scalar(
+        select(User)
+        .where(User.id == current.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if user is None or user.is_blocked or not verify_password(data.password, user.password_hash):
+        raise HTTPException(401, "Проверьте текущий пароль и повторите вход")
+    # A session revoked while waiting for the user lock must not rotate the codes.
+    record = session.get(
+        LoginSession, token_hash(request.cookies.get(COOKIE, "")), populate_existing=True
+    )
+    if record is None or record.expires_at <= datetime.now(UTC):
+        raise HTTPException(401, "Войдите в аккаунт")
+    codes = new_recovery_codes(session, user.id)
+    session.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return CodesOut(recovery_codes=codes)
+
+
+@router.post("/auth/recover", status_code=204)
+def recover(data: RecoveryRequest, request: Request, response: Response, session: DB) -> None:
+    limit_auth(request, data.email)
+    user = session.scalar(select(User).where(User.email == data.email).with_for_update())
+    normalized = data.code.strip().replace("-", "").replace(" ", "").upper()
+    code = session.get(RecoveryCode, token_hash(normalized))
+    if user is None or user.is_blocked or code is None or code.user_id != user.id:
+        raise HTTPException(400, "Неверный email или резервный код")
+    user.password_hash = hash_password(data.password)
+    session.delete(code)
+    session.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+    session.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.delete_cookie(
+        COOKIE,
+        path="/api",
+        secure=request.app.state.settings.cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )

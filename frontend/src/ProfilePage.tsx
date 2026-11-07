@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { RecoveryCodes } from './RecoveryPage';
 import { Link } from 'react-router-dom';
 
 interface Profile { full_name: string; target_role: string; education: string; about: string }
@@ -17,6 +18,8 @@ async function api(path: string, method = 'GET', body?: object) {
 }
 
 export function ProfilePage() {
+  const [codes, setCodes] = useState<string[]>([]);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [user, setUser] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -70,8 +73,17 @@ export function ProfilePage() {
     try {
       const current = await api('/auth/' + mode, 'POST', { email, password });
       setPassword('');
+      if (mode === 'register') setCodes(current.recovery_codes ?? []);
       const saved = await api('/profile');
       setProfile(saved); setUser(current.email); setIsAdmin(current.is_admin === true);
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка подключения'); }
+    finally { setBusy(false); }
+  }
+  async function generateCodes(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage('');
+    try {
+      const result = await api('/auth/recovery-codes', 'POST', { password: currentPassword });
+      setCurrentPassword(''); setCodes(result.recovery_codes);
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка подключения'); }
     finally { setBusy(false); }
   }
@@ -83,10 +95,11 @@ export function ProfilePage() {
   }
   async function logout() {
     setBusy(true); setMessage('');
-    try { await api('/auth/logout', 'POST'); setUser(null); setProfile(empty); setIsAdmin(false); }
+    try { await api('/auth/logout', 'POST'); setUser(null); setProfile(empty); setIsAdmin(false); setCurrentPassword(''); }
     catch { setMessage('Не удалось выйти. Повторите попытку.'); }
     finally { setBusy(false); }
   }
+  if (codes.length) return <RecoveryCodes codes={codes} onClose={() => setCodes([])} />;
   if (loading) return <p role="status">{retrying ? 'Ожидаем ответа сервера… После простоя запуск может занять около минуты.' : 'Проверяем вход…'}</p>;
   return <section className="placeholder profile-page"><span className="eyebrow">ЛИЧНОЕ ПРОСТРАНСТВО</span>
     <h1>{user ? 'Ваш профиль' : mode === 'login' ? 'Вход' : 'Создать аккаунт'}</h1>
@@ -98,13 +111,16 @@ export function ProfilePage() {
       <label>Образование<textarea value={profile.education} maxLength={3000} onChange={e => setProfile({ ...profile, education: e.target.value })} /></label>
       <label>О себе и проектах<textarea value={profile.about} maxLength={5000} onChange={e => setProfile({ ...profile, about: e.target.value })} /></label>
       <button className="button" disabled={busy}>Сохранить профиль</button>
-    </form><button className="button secondary" disabled={busy} onClick={() => void logout()}>Выйти</button></> : <>
+    </form><form onSubmit={generateCodes}><h2>Резервные коды</h2><p>Создайте 8 одноразовых кодов для восстановления доступа. Новый набор заменит все прежние коды.</p>
+      <label>Текущий пароль<input type="password" autoComplete="current-password" required minLength={8} maxLength={128} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label>
+      <button className="button secondary" disabled={busy}>Создать новый набор кодов</button></form><button className="button secondary" disabled={busy} onClick={() => void logout()}>Выйти</button></> : <>
       <form onSubmit={authenticate}>
         <label>Email<input type="email" autoComplete="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label>Пароль<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength={8} maxLength={128} value={password} onChange={e => setPassword(e.target.value)} /></label>
         <small>От 8 до 128 символов. Для учебной версии используйте отдельный пароль.</small>
         <button className="button" disabled={busy}>{busy ? 'Подождите…' : mode === 'login' ? 'Войти' : 'Зарегистрироваться'}</button>
       </form>
+      <Link to="/recover">Восстановить доступ по резервному коду</Link>
       <button className="button secondary" disabled={busy} onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setMessage(''); setPassword(''); }}>{mode === 'login' ? 'Создать аккаунт' : 'Уже есть аккаунт'}</button>
     </>}
   </section>;
