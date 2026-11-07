@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
+from app.admin import router as admin_router
 from app.auth import AuthLimiter, router
 from app.config import Settings
 from app.db import check_database, make_engine
@@ -41,6 +42,7 @@ def create_app(
     api.state.settings = config
     api.state.auth_limiter = AuthLimiter()
     api.include_router(router)
+    api.include_router(admin_router)
 
     @api.middleware("http")
     async def protect_origin(request: Request, call_next: RequestResponseEndpoint) -> Response:

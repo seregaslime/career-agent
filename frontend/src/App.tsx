@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes, Link } from 'react-router-dom';
+import { AdminPage } from './AdminPage';
 import { ProfilePage } from './ProfilePage';
 import { ServiceStatus } from './ServiceStatus';
 
@@ -49,6 +50,6 @@ export function App() {
     </nav><div className="sidebar-note"><span>МАЛЕНЬКИЕ ШАГИ, БОЛЬШИЕ ПЕРЕМЕНЫ</span><p>Не обязательно знать весь путь, чтобы начать.</p></div>
     <div className="sidebar-footer"><span className="live-dot" />Учебный проект · MVP</div>
   </aside><div className="main-wrap"><header className="topbar"><span>Личное пространство <span className="separator">/</span> Карьерный маршрут</span><Link className="build-label" to="/profile">Профиль / Вход</Link></header>
-    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} />{steps.filter(s => s.path !== '/profile').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
+    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} /><Route path="/admin" element={<AdminPage />} />{steps.filter(s => s.path !== '/profile').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
     <footer className="page-footer">Career Agent <span>Ваша карьера начинается с вас.</span></footer></div></div>;
 }
