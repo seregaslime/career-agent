@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes, Link } from 'react-router-dom';
+import { ProfilePage } from './ProfilePage';
 import { ServiceStatus } from './ServiceStatus';
 
 const steps = [
@@ -10,7 +11,7 @@ const steps = [
 
 function Home() {
   return <>
-    <div className="page-heading"><span className="eyebrow">ВАШ КАРЬЕРНЫЙ МАРШРУТ</span><span className="version">Версия 0.1 · Каркас</span></div>
+    <div className="page-heading"><span className="eyebrow">ВАШ КАРЬЕРНЫЙ МАРШРУТ</span><span className="version">Версия 0.2 · Личный профиль</span></div>
     <section className="hero">
       <div className="hero-copy"><span className="pill">От интереса — к первому шагу</span>
         <h1>У вашего опыта<br />есть <em>направление.</em></h1>
@@ -27,7 +28,7 @@ function Home() {
     <section className="route-section"><div className="section-heading"><h2>Как устроен маршрут</h2><span>4 шага к ясности</span></div>
       <div className="step-grid">{steps.map(step => <Link to={step.path} className="step-card" key={step.path}>
         <div className="step-top"><span>{step.number}</span><span className="step-icon">{step.icon}</span></div>
-        <h3>{step.title}</h3><p>{step.text}</p><span className="step-link">Скоро <span>↗</span></span>
+        <h3>{step.title}</h3><p>{step.text}</p><span className="step-link">{step.path === '/profile' ? 'Открыть' : 'Скоро'} <span>↗</span></span>
       </Link>)}</div>
     </section>
     <ServiceStatus />
@@ -47,7 +48,7 @@ export function App() {
       <NavLink to="/" end><span>⌂</span>Обзор</NavLink>{steps.map(s => <NavLink to={s.path} key={s.path}><span>{s.icon}</span>{s.title}</NavLink>)}
     </nav><div className="sidebar-note"><span>МАЛЕНЬКИЕ ШАГИ, БОЛЬШИЕ ПЕРЕМЕНЫ</span><p>Не обязательно знать весь путь, чтобы начать.</p></div>
     <div className="sidebar-footer"><span className="live-dot" />Учебный проект · MVP</div>
-  </aside><div className="main-wrap"><header className="topbar"><span>Личное пространство <span className="separator">/</span> Карьерный маршрут</span><span className="build-label">В разработке</span></header>
-    <main><Routes><Route path="/" element={<Home />} />{steps.map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
+  </aside><div className="main-wrap"><header className="topbar"><span>Личное пространство <span className="separator">/</span> Карьерный маршрут</span><Link className="build-label" to="/profile">Профиль / Вход</Link></header>
+    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} />{steps.filter(s => s.path !== '/profile').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
     <footer className="page-footer">Career Agent <span>Ваша карьера начинается с вас.</span></footer></div></div>;
 }

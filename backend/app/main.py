@@ -2,11 +2,13 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.middleware.base import RequestResponseEndpoint
 
+from app.auth import AuthLimiter, router
 from app.config import Settings
 from app.db import check_database, make_engine
 
@@ -35,10 +37,26 @@ def create_app(
             engine.dispose()
 
     api = FastAPI(title="Career Agent API", version="0.1.0", lifespan=lifespan)
+    api.state.engine = engine
+    api.state.settings = config
+    api.state.auth_limiter = AuthLimiter()
+    api.include_router(router)
+
+    @api.middleware("http")
+    async def protect_origin(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if request.method in ("POST", "PATCH", "PUT", "DELETE"):
+            origin = request.headers.get("origin")
+            if origin is not None and origin not in config.cors_origins:
+                return JSONResponse(
+                    status_code=403, content={"detail": "Недопустимый источник запроса"}
+                )
+        return await call_next(request)
+
     api.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST", "PATCH"],
+        allow_credentials=True,
         allow_headers=["Content-Type"],
     )
 

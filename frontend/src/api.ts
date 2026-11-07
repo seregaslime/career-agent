@@ -1,7 +1,7 @@
-const base = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+const base = ''; // Same-origin proxy keeps cookies first-party.
 
 async function get(path: string, signal?: AbortSignal): Promise<unknown> {
-  const response = await fetch(`${base}${path}`, { signal: signal ?? AbortSignal.timeout(10000) });
+  const response = await fetch(`${base}${path}`, { credentials: 'same-origin', signal: signal ?? AbortSignal.timeout(10000) });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
