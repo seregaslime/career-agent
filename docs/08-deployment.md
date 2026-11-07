@@ -3,7 +3,7 @@
 ## Порядок выпуска
 
 PR → Repository checks → merge в main → проверки merge-коммита → Deploy production.
-Job deploy получает тот же github.sha, что проверен CI. Render получает commitId; скрипт ждёт live и сверяет commit. Затем проверяется /api/ready, собирается frontend с публичным API URL и публикуется в Cloudflare Pages.
+Job deploy получает тот же github.sha, что проверен CI. Render получает commitId; скрипт ждёт live и сверяет commit. Затем проверяется /api/ready, собирается frontend с same-origin API proxy и публикуется в Cloudflare Pages.
 
 Деплой работает только на push в main, после успешного CI, и только при DEPLOY_ENABLED=true. PR и ручной workflow_dispatch не выпускают production. Автодеплой Render должен быть выключен, чтобы не обходить CI. Сериализация production job запрещает одновременные выпуски; текущий выпуск не отменяется.
 
@@ -26,7 +26,7 @@ Repository variable DEPLOY_ENABLED=true включить только после
 ## Backend Render Free
 
 Git repo: https://github.com/seregaslime/career-agent, branch main, runtime Python, plan free, region Frankfurt.
-Build: `cd backend && uv sync --frozen --no-dev`.
+Build: `pip install uv==0.11.27 && cd backend && python -m uv sync --frozen --no-dev`.
 Start: `sh backend/start.sh`.
 PYTHON_VERSION=3.12.13. DATABASE_URL — прямой TLS connection string Neon с драйвером postgresql+psycopg. CORS_ORIGINS — JSON-массив точных frontend origins. Healthcheck — /api/ready.
 

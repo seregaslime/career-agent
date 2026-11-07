@@ -23,6 +23,7 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-career}:${POSTGRES_PASSWORD:-career_local}@db:5432/${POSTGRES_DB:-career}
+      COOKIE_SECURE: "false"
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:8080"]'
     ports: ["127.0.0.1:8000:8000"]
     depends_on:

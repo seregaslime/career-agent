@@ -8,4 +8,12 @@ class Settings(BaseSettings):
     database_url: SecretStr = SecretStr(
         "postgresql+psycopg://career:career_local@localhost:55433/career"
     )
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://localhost:8080",
+            "https://career-agent-9pq.pages.dev",
+        ]
+    )
+
+    cookie_secure: bool = True

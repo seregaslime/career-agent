@@ -5,5 +5,5 @@
     "strict": true, "skipLibCheck": true, "noEmit": true,
     "esModuleInterop": true, "resolveJsonModule": true,
     "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
-  }, "include": ["src", "vite.config.ts"]
+  }, "include": ["src", "functions", "vite.config.ts"]
 }
