@@ -20,6 +20,8 @@ export function ProfilePage() {
   const [user, setUser] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [checkAttempt, setCheckAttempt] = useState(0);
+  const [retrying, setRetrying] = useState(false);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,16 +30,40 @@ export function ProfilePage() {
   const [message, setMessage] = useState('');
   useEffect(() => {
     let active = true;
-    fetch('/api/auth/me', { credentials: 'same-origin' }).then(async response => {
-      if (response.status === 401) return;
-      if (!response.ok) throw new Error('Не удалось проверить вход. Повторите позже.');
-      const current = await response.json();
+    const controller = new AbortController();
+    async function checkSession() {
+      // Only this read is retried. Never repeat registration or login automatically.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+          const response = await fetch('/api/auth/me', {
+            credentials: 'same-origin',
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]),
+          });
+          if (response.status === 401) return null;
+          if (!response.ok) {
+            if (![502, 503, 504].includes(response.status)) throw new Error('session-check-failed');
+            throw new TypeError('temporary-unavailable');
+          }
+          return await response.json();
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          if (attempt === 7 || (error instanceof Error && error.message === 'session-check-failed')) {
+            throw new Error('Сервер пока недоступен. Повторите проверку входа.', { cause: error });
+          }
+          if (active) setRetrying(true);
+          await new Promise<void>(resolve => setTimeout(resolve, 10000));
+          if (controller.signal.aborted) throw error;
+        }
+      }
+    }
+    checkSession().then(async current => {
+      if (!current) return;
       const saved = await api('/profile');
       if (active) { setProfile(saved); setUser(current.email); setIsAdmin(current.is_admin === true); }
     }).catch(error => { if (active) setMessage(String(error.message)); })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
+    return () => { active = false; controller.abort(); };
+  }, [checkAttempt]);
 
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setMessage('');
@@ -61,10 +87,11 @@ export function ProfilePage() {
     catch { setMessage('Не удалось выйти. Повторите попытку.'); }
     finally { setBusy(false); }
   }
-  if (loading) return <p role="status">Проверяем вход…</p>;
+  if (loading) return <p role="status">{retrying ? 'Ожидаем ответа сервера… После простоя запуск может занять около минуты.' : 'Проверяем вход…'}</p>;
   return <section className="placeholder profile-page"><span className="eyebrow">ЛИЧНОЕ ПРОСТРАНСТВО</span>
     <h1>{user ? 'Ваш профиль' : mode === 'login' ? 'Вход' : 'Создать аккаунт'}</h1>
     {message && <p role="status">{message}</p>}
+    {!user && message && <button className="button secondary" onClick={() => { setLoading(true); setRetrying(false); setMessage(''); setCheckAttempt(value => value + 1); }}>Повторить проверку входа</button>}
     {user ? <><p>{user}</p>{isAdmin && <Link className="button secondary" to="/admin">Панель администратора</Link>}<form onSubmit={save}>
       <label>Имя<input value={profile.full_name} maxLength={120} onChange={e => setProfile({ ...profile, full_name: e.target.value })} /></label>
       <label>Желаемая должность<input value={profile.target_role} maxLength={120} onChange={e => setProfile({ ...profile, target_role: e.target.value })} /></label>
