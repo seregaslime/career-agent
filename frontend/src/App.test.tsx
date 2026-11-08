@@ -4,10 +4,11 @@ import { expect, it, vi, afterEach } from 'vitest';
 import { App } from './App';
 
 afterEach(() => vi.unstubAllGlobals());
-it('opens a routed placeholder without pretending interview is available', () => {
+it('opens the interview and loads its history', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok:true, json: async () => [] }));
   render(<MemoryRouter initialEntries={['/chat']}><App /></MemoryRouter>);
-  expect(screen.getByRole('heading', { name: 'Знакомство' })).toBeInTheDocument();
-  expect(screen.getByText(/Этот раздел ещё в разработке/)).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Карьерное интервью' })).toBeInTheDocument();
+  expect(await screen.findByText(/Начните с рассказа/)).toBeInTheDocument();
 });
 it('renders the overview and navigation', () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));

@@ -2,7 +2,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from app.config import Settings
 
-SCHEMA_VERSION = "0005_recovery_codes"
+SCHEMA_VERSION = "0006_chat"
 
 
 def make_engine(settings: Settings) -> Engine:
