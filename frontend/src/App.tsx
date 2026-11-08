@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes, Link } from 'react-router-dom';
+import { ChatPage } from './ChatPage';
 import { AdminPage } from './AdminPage';
 import { RecoveryPage } from './RecoveryPage';
 import { ProfilePage } from './ProfilePage';
@@ -19,7 +20,7 @@ function Home() {
         <h1>У вашего опыта<br />есть <em>направление.</em></h1>
         <p>Соберём проекты и навыки в цельную историю. Разберёмся, какая работа вам подходит и чему учиться дальше.</p>
         <Link className="button" to="/chat">Посмотреть первый шаг <span>↗</span></Link>
-        <small>Сейчас готовим основу. Интервью и подбор появятся в следующих версиях.</small>
+        <small>Интервью работает с вашей локальной моделью или совместимым API.</small>
       </div>
       <div className="route-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" />
         <div className="art-label top-label">ВАШ ПОТЕНЦИАЛ</div><div className="core">C<span>↗</span></div>
@@ -30,7 +31,7 @@ function Home() {
     <section className="route-section"><div className="section-heading"><h2>Как устроен маршрут</h2><span>4 шага к ясности</span></div>
       <div className="step-grid">{steps.map(step => <Link to={step.path} className="step-card" key={step.path}>
         <div className="step-top"><span>{step.number}</span><span className="step-icon">{step.icon}</span></div>
-        <h3>{step.title}</h3><p>{step.text}</p><span className="step-link">{step.path === '/profile' ? 'Открыть' : 'Скоро'} <span>↗</span></span>
+        <h3>{step.title}</h3><p>{step.text}</p><span className="step-link">{['/profile', '/chat'].includes(step.path) ? 'Открыть' : 'Скоро'} <span>↗</span></span>
       </Link>)}</div>
     </section>
     <ServiceStatus />
@@ -51,6 +52,6 @@ export function App() {
     </nav><div className="sidebar-note"><span>МАЛЕНЬКИЕ ШАГИ, БОЛЬШИЕ ПЕРЕМЕНЫ</span><p>Не обязательно знать весь путь, чтобы начать.</p></div>
     <div className="sidebar-footer"><span className="live-dot" />Учебный проект · MVP</div>
   </aside><div className="main-wrap"><header className="topbar"><span>Личное пространство <span className="separator">/</span> Карьерный маршрут</span><Link className="build-label" to="/profile">Профиль / Вход</Link></header>
-    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} /><Route path="/recover" element={<RecoveryPage />} /><Route path="/admin" element={<AdminPage />} />{steps.filter(s => s.path !== '/profile').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
+    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} /><Route path="/recover" element={<RecoveryPage />} /><Route path="/chat" element={<ChatPage />} /><Route path="/admin" element={<AdminPage />} />{steps.filter(s => s.path !== '/profile' && s.path !== '/chat').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
     <footer className="page-footer">Career Agent <span>Ваша карьера начинается с вас.</span></footer></div></div>;
 }
