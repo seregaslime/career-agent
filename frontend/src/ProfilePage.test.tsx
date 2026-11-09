@@ -94,3 +94,20 @@ it('shows registration codes once before opening the profile', async () => {
   await screen.findByRole('heading', { name: 'Ваш профиль' });
   expect(screen.queryByText('ABCD-TEST-CODE')).not.toBeInTheDocument();
 });
+
+
+it.each(['login', 'register'])('distinguishes server failure from invalid fields in %s', async mode => {
+  const fetch = vi.fn().mockImplementation(() => json({}, 401));
+  vi.stubGlobal('fetch', fetch);
+  render(<MemoryRouter><ProfilePage /></MemoryRouter>);
+  await screen.findByRole('heading', { name: 'Вход' });
+  if (mode === 'register') fireEvent.click(screen.getByRole('button', { name: 'Создать аккаунт' }));
+  fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'synthetic@example.com' } });
+  fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: 'synthetic-password' } });
+  fetch.mockResolvedValue(new Response('<html>502</html>', { status: 502 }));
+  fireEvent.click(screen.getByRole('button', { name: mode === 'login' ? 'Войти' : 'Зарегистрироваться' }));
+  await screen.findByText(/Сервер временно недоступен/);
+  expect(screen.queryByText('Проверьте заполнение полей и повторите попытку.')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Пароль')).toHaveValue('synthetic-password');
+  expect(fetch).toHaveBeenCalledTimes(2); // A mutation is not retried automatically.
+});

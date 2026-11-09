@@ -5,14 +5,18 @@ import { Link } from 'react-router-dom';
 interface Profile { full_name: string; target_role: string; education: string; about: string }
 const empty: Profile = { full_name: '', target_role: '', education: '', about: '' };
 async function api(path: string, method = 'GET', body?: object) {
-  const response = await fetch('/api' + path, {
-    method, credentials: 'same-origin',
+  let response: Response;
+  try { response = await fetch('/api' + path, {
+    method, credentials: 'same-origin', signal: AbortSignal.timeout(30000),
     headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }); } catch (error) {
+    throw new Error('Не удалось получить ответ сервера. Проверьте соединение и повторите проверку входа. Если регистрировались, сначала попробуйте войти с теми же данными.', { cause: error });
+  }
+  if (response.status >= 500) throw new Error('Сервер временно недоступен. Подождите около минуты и нажмите «Повторить проверку входа», затем повторите действие.');
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(typeof data.detail === 'string' ? data.detail : 'Проверьте заполнение полей и повторите попытку.');
+    throw new Error(typeof data.detail === 'string' ? data.detail : response.status === 422 ? 'Проверьте email и пароль: пароль должен содержать от 8 до 128 символов.' : `Не удалось выполнить запрос (HTTP ${response.status}). Повторите попытку.`);
   }
   return response.status === 204 ? null : response.json();
 }
