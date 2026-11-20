@@ -18,7 +18,7 @@ def skill(name: str, evidence: str) -> dict[str, object]:
 
 
 @pytest.mark.integration
-def test_interview_facts_require_grounding_ownership_and_confirmation() -> None:
+def test_grounded_interview_facts_go_straight_to_the_editable_profile() -> None:
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires disposable PostgreSQL")
@@ -67,7 +67,8 @@ def test_interview_facts_require_grounding_ownership_and_confirmation() -> None:
         assert result.headers["cache-control"] == "no-store"
         saved = result.json()
         assert [item["kind"] for item in saved["items"]] == ["skill", "project", "education"]
-        assert {item["status"] for item in saved["items"]} == {"suggested"}
+        assert {item["status"] for item in saved["items"]} == {"confirmed"}
+        assert {item["source"] for item in saved["items"]} == {"interview"}
         assert saved["skipped"] == [
             {"index": 1, "reason": "evidence"},
             {"index": 2, "reason": "duplicate"},
@@ -80,28 +81,22 @@ def test_interview_facts_require_grounding_ownership_and_confirmation() -> None:
 
         python, project, education = (item["id"] for item in saved["items"])
         assert b.get("/api/profile/items").json() == []
-        assert b.post(f"/api/profile/items/{python}/confirm", json={}).status_code == 404
+        assert b.patch(f"/api/profile/items/{python}", json={"data": {}}).status_code == 404
         assert b.delete(f"/api/profile/items/{python}").status_code == 404
+        # The old review endpoints are gone: interview facts need no confirmation.
+        assert a.post(f"/api/profile/items/{python}/confirm", json={}).status_code in (404, 405)
+        assert a.post(f"/api/profile/items/{python}/reject").status_code in (404, 405)
         bad = {"data": {"name": "Python", "is_admin": True}}
-        assert a.post(f"/api/profile/items/{python}/confirm", json=bad).status_code == 422
-        confirmed = a.post(
-            f"/api/profile/items/{python}/confirm",
+        assert a.patch(f"/api/profile/items/{python}", json=bad).status_code == 422
+        edited = a.patch(
+            f"/api/profile/items/{python}",
             json={"data": {"name": "Python", "level": "intermediate"}},
         )
-        assert confirmed.status_code == 200
-        assert confirmed.json()["status"] == "confirmed"
-        assert confirmed.json()["data"]["level"] == "intermediate"
-        assert confirmed.json()["evidence"] == "бота на Python"
-        assert a.post(f"/api/profile/items/{python}/confirm", json={}).status_code == 200
-        assert a.post(f"/api/profile/items/{python}/reject").status_code == 409
-
-        assert a.post(f"/api/profile/items/{project}/reject").json()["status"] == "rejected"
-        assert a.post(f"/api/profile/items/{project}/reject").status_code == 200
-        assert a.post(f"/api/profile/items/{project}/confirm", json={}).status_code == 409
-        edit = {"data": {"title": "Бот"}}
-        assert a.patch(f"/api/profile/items/{project}", json=edit).status_code == 409
-        rejected = a.get("/api/profile/items?status=rejected").json()
-        assert [item["id"] for item in rejected] == [project]
+        assert edited.status_code == 200
+        assert edited.json()["status"] == "confirmed"
+        assert edited.json()["data"]["level"] == "intermediate"
+        assert edited.json()["evidence"] == "бота на Python"
+        assert a.delete(f"/api/profile/items/{project}").status_code == 204
 
         assert (
             a.post("/api/profile/items", json={"kind": "skill", "data": {"name": " python "}})
@@ -123,9 +118,10 @@ def test_interview_facts_require_grounding_ownership_and_confirmation() -> None:
         assert a.delete(f"/api/profile/items/{sql}").status_code == 404
 
         statuses = {i["id"]: i["status"] for i in a.get("/api/profile/items").json()}
-        assert statuses == {python: "confirmed", education: "suggested"}
+        assert statuses == {python: "confirmed", education: "confirmed"}
         confirmed_only = a.get("/api/profile/items?status=confirmed").json()
-        assert [item["id"] for item in confirmed_only] == [python]
+        assert [item["id"] for item in confirmed_only] == [python, education]
+        assert a.get("/api/profile/items?status=suggested").json() == []
 
         profile = a.patch("/api/profile", json={"work_format": "remote", "location": "Москва"})
         assert profile.status_code == 200

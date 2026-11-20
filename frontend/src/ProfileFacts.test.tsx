@@ -18,9 +18,8 @@ function server(initial: Row[]) {
     const [, id, action] = url.match(/^\/api\/profile\/items\/([^/]+)(?:\/(\w+))?$/) ?? [];
     const current = rows.find(row => row.id === id);
     if (!current) return Response.json({ detail: 'Запись профиля не найдена' }, { status: 404 });
-    if (action === 'confirm') Object.assign(current, { status: 'confirmed', data: body?.data ?? current.data });
-    else if (action === 'reject') Object.assign(current, { status: 'rejected' });
-    else if (options?.method === 'PATCH') Object.assign(current, { data: body.data });
+    if (action) return Response.json({ detail: 'Not Found' }, { status: 404 });
+    if (options?.method === 'PATCH') Object.assign(current, { data: body.data });
     else if (options?.method === 'DELETE') { rows = rows.filter(row => row !== current); return new Response(null, { status: 204 }); }
     return Response.json(current);
   });
@@ -28,31 +27,27 @@ function server(initial: Row[]) {
   return fetch;
 }
 
-it('confirms, corrects and rejects interview suggestions with their quotes', async () => {
+it('shows interview facts directly in the profile and lets the user edit and delete them', async () => {
   const fetch = server([
-    item('python', 'skill', 'suggested', { name: 'Python', level: null }, 'бота на Python'),
-    item('bot', 'project', 'suggested', { title: 'Бот', role: '', technologies: ['aiogram'], description: '' }, 'сделал бота'),
-    item('sql', 'skill', 'suggested', { name: 'SQL', level: null }, 'немного SQL'),
+    item('python', 'skill', 'confirmed', { name: 'Python', level: null }, 'бота на Python'),
+    item('bot', 'project', 'confirmed', { title: 'Бот', role: '', technologies: ['aiogram'], description: '' }, 'сделал бота'),
   ]);
   render(<ProfileFacts />);
-  const suggestions = await screen.findByRole('heading', { name: 'Предложено из интервью' });
-  expect(screen.getByText('«бота на Python»')).toBeInTheDocument();
-  const group = suggestions.parentElement as HTMLElement;
-  fireEvent.click(within(group).getAllByRole('button', { name: 'Подтвердить' })[0]);
-  await screen.findByText('Факт подтверждён и добавлен в профиль');
-  expect(fetch).toHaveBeenCalledWith('/api/profile/items/python/confirm', expect.objectContaining({ method: 'POST', body: '{}' }));
-  const skills = screen.getByRole('heading', { name: 'Навыки' }).parentElement as HTMLElement;
+  const skills = (await screen.findByRole('heading', { name: 'Навыки' })).parentElement as HTMLElement;
   expect(within(skills).getByText('Python')).toBeInTheDocument();
-
-  fireEvent.click(within(group).getAllByRole('button', { name: 'Исправить' })[1]);
-  fireEvent.change(screen.getByLabelText('Уровень'), { target: { value: 'beginner' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Подтвердить с правками' }));
-  await waitFor(() => expect(within(skills).getByText('SQL · Начальный')).toBeInTheDocument());
-  expect(fetch).toHaveBeenCalledWith('/api/profile/items/sql/confirm', expect.objectContaining({ body: JSON.stringify({ data: { name: 'SQL', level: 'beginner' } }) }));
-
-  fireEvent.click(screen.getByRole('button', { name: 'Отклонить' }));
-  await screen.findByText('Предложение отклонено');
+  expect(within(skills).getByText('из интервью')).toHaveAttribute('title', '«бота на Python»');
   expect(screen.queryByRole('heading', { name: 'Предложено из интервью' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Подтвердить|Отклонить/ })).not.toBeInTheDocument();
+
+  fireEvent.click(within(skills).getByRole('button', { name: 'Изменить' }));
+  fireEvent.change(screen.getByLabelText('Уровень'), { target: { value: 'beginner' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+  await waitFor(() => expect(within(skills).getByText('Python · Начальный')).toBeInTheDocument());
+  expect(fetch).toHaveBeenCalledWith('/api/profile/items/python', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ data: { name: 'Python', level: 'beginner' } }) }));
+
+  const projects = screen.getByRole('heading', { name: 'Проекты' }).parentElement as HTMLElement;
+  fireEvent.click(within(projects).getByRole('button', { name: 'Удалить' }));
+  await screen.findByText('Запись удалена');
   expect(screen.queryByText('Бот · aiogram')).not.toBeInTheDocument();
 });
 

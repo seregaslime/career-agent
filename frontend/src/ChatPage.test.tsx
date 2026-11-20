@@ -129,30 +129,36 @@ it('clears keys when changing provider or destination, and allows a manual model
  fireEvent.change(screen.getByLabelText('Режим'),{target:{value:'api'}});
  expect(screen.getByLabelText('API-ключ')).toHaveValue('');
 });
-it('suggests grounded facts after a saved reply and lets the user retry a failed extraction', async () => {
- let turn: {id:string;prompt:string;reply:string|null;facts_checked:boolean;created_at:string} | null = null;
+it('adds grounded facts to the profile without buttons and retries failed extractions automatically', async () => {
+ type T = {id:string;prompt:string;reply:string|null;facts_checked:boolean;created_at:string};
+ const turns: T[] = [];
+ const extracted: string[] = [];
  let extractions = 0;
  const fetch = vi.fn(async (url:string, options?:RequestInit) => {
    const body = options?.body ? JSON.parse(options.body as string) : undefined;
    if (url === '/api/chat' && options?.method === 'GET') return Response.json([]);
-   if (url === '/api/chat' && options?.method === 'POST') { turn = {...body,reply:null,facts_checked:false,created_at:''}; return Response.json(turn); }
-   if (url.startsWith('/api/chat/') && turn) { turn = {...turn,reply:body.reply}; return Response.json(turn); }
+   if (url === '/api/chat' && options?.method === 'POST') { const turn = {...body,reply:null,facts_checked:false,created_at:''}; turns.push(turn); return Response.json(turn); }
+   if (url.startsWith('/api/chat/')) { const turn = turns.find(row => url.endsWith(row.id)) as T; turn.reply = body.reply; return Response.json(turn); }
    if (url === 'http://127.0.0.1:11434/api/tags') return Response.json({models:[{name:'test-model'}]});
    if (url === 'http://127.0.0.1:11434/api/chat') {
      if (!String(body.messages[0].content).startsWith('Ты извлекаешь')) return Response.json({message:{content:'Какие задачи решал бот?'}});
-     expect(body.messages[1].content).toContain('Ответ пользователя:\nСделал бота на Python');
      extractions++;
-     return Response.json({message:{content: extractions === 1 ? 'Не могу ответить JSON' : JSON.stringify({facts:[
-       {kind:'skill',evidence:'на Python',data:{name:'Python'}},
-       {kind:'skill',evidence:'Docker',data:{name:'Docker'}},
-     ]})}});
+     if (extractions <= 2) return Response.json({message:{content:'Не могу ответить JSON'}});
+     const python = String(body.messages[1].content).includes('на Python');
+     return Response.json({message:{content: JSON.stringify({facts: python
+       ? [{kind:'skill',evidence:'на Python',data:{name:'Python'}},{kind:'skill',evidence:'Docker',data:{name:'Docker'}}]
+       : [{kind:'skill',evidence:'знаю SQL',data:{name:'SQL'}}]})}});
    }
-   if (url === '/api/profile/items/extracted' && turn) {
-     expect(body).toEqual({turn_id:turn.id,facts:[
+   if (url === '/api/profile/items/extracted') {
+     const turn = turns.find(row => row.id === body.turn_id) as T;
+     turn.facts_checked = true; extracted.push(turn.prompt);
+     const python = turn.prompt.includes('Python');
+     if (python) expect(body.facts).toEqual([
        {kind:'skill',evidence:'на Python',data:{name:'Python',level:null}},
        {kind:'skill',evidence:'Docker',data:{name:'Docker',level:null}},
-     ]});
-     return Response.json({items:[{id:'i1',kind:'skill',status:'suggested',source:'interview',data:{name:'Python',level:null},evidence:'на Python',turn_id:turn.id,created_at:'',updated_at:''}],skipped:[{index:1,reason:'evidence'}],already_processed:false});
+     ]);
+     const name = python ? 'Python' : 'SQL';
+     return Response.json({items:[{id:'i-'+name,kind:'skill',status:'confirmed',source:'interview',data:{name,level:null},evidence:'',turn_id:turn.id,created_at:'',updated_at:''}],skipped:python?[{index:1,reason:'evidence'}]:[],already_processed:false});
    }
    throw new Error('Unexpected request '+url);
  });
@@ -163,13 +169,16 @@ it('suggests grounded facts after a saved reply and lets the user retry a failed
  await screen.findByText(/Список моделей получен/);
  fireEvent.change(screen.getByLabelText('Ваше сообщение'),{target:{value:'Сделал бота на Python'}});
  fireEvent.click(screen.getByRole('button',{name:'Отправить'}));
- await screen.findByText('Какие задачи решал бот?');
- await screen.findByText(/Факты не извлечены: Модель вернула факты не в формате JSON/);
- expect(screen.queryByRole('alert')).not.toBeInTheDocument();
- fireEvent.click(screen.getByRole('button',{name:'Найти факты в этом сообщении'}));
- await screen.findByText('Найдено фактов: 1. Проверьте и подтвердите их в профиле. Не подтверждено цитатой и пропущено: 1.');
- expect(screen.getByRole('link',{name:'Открыть профиль'})).toHaveAttribute('href','/profile');
- expect(screen.queryByRole('button',{name:'Найти факты в этом сообщении'})).not.toBeInTheDocument();
+ await screen.findByText('Факты пока не извлечены, повторим после следующего ответа. Причина: Модель вернула факты не в формате JSON. Если это повторяется, выберите другую модель.');
  expect(extractions).toBe(2);
- expect(fetch.mock.calls.some(([url]) => url === '/api/profile' || String(url).startsWith('/api/profile/items/i1'))).toBe(false);
+ expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+ expect(screen.queryByRole('button',{name:/Найти факты/})).not.toBeInTheDocument();
+
+ fireEvent.change(screen.getByLabelText('Ваше сообщение'),{target:{value:'Ещё знаю SQL'}});
+ fireEvent.click(screen.getByRole('button',{name:'Отправить'}));
+ await screen.findByText('Добавлено в профиль: 1. Изменить или удалить записи можно в профиле. Не подтверждено цитатой из сообщения и пропущено: 1.');
+ await screen.findByText('Добавлено в профиль: 1. Изменить или удалить записи можно в профиле.');
+ expect(extracted).toEqual(['Ещё знаю SQL','Сделал бота на Python']);
+ expect(screen.getAllByRole('link',{name:'Открыть профиль'})[0]).toHaveAttribute('href','/profile');
+ expect(fetch.mock.calls.some(([url]) => /\/(confirm|reject)$/.test(String(url)))).toBe(false);
 });

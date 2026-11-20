@@ -7,9 +7,9 @@ type Turn = { id: string; prompt: string; reply: string | null; created_at: stri
 type Extracted = { items: Item[]; skipped: { index: number; reason: string }[]; already_processed: boolean };
 function factSummary(result: Extracted) {
   const found = result.items.length;
-  const unconfirmed = result.skipped.filter(row => row.reason === 'evidence').length;
-  const main = found ? `Найдено фактов: ${found}. Проверьте и подтвердите их в профиле.` : 'Новых фактов для профиля в этом сообщении нет.';
-  return unconfirmed ? `${main} Не подтверждено цитатой и пропущено: ${unconfirmed}.` : main;
+  const ungrounded = result.skipped.filter(row => row.reason === 'evidence').length;
+  const main = found ? `Добавлено в профиль: ${found}. Изменить или удалить записи можно в профиле.` : 'Новых фактов для профиля в этом сообщении нет.';
+  return ungrounded ? `${main} Не подтверждено цитатой из сообщения и пропущено: ${ungrounded}.` : main;
 }
 class SignInRequired extends Error {}
 async function api<T>(path = '', body?: object, method = 'POST', signal?: AbortSignal): Promise<T> {
@@ -62,26 +62,26 @@ export function ChatPage() {
     catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подключения'); }
     finally { setBusy(false); }
   }
-  async function findFacts(turn: Turn, history: Turn[], signal: AbortSignal) {
-    // A failure here never loses the saved conversation: the user can retry per message.
-    try {
-      const index = history.findIndex(row => row.id === turn.id);
-      const question = index > 0 ? history[index - 1].reply : null;
-      const facts = parseFacts(await complete(config, extractionMessages(question, turn.prompt), signal));
-      const result = await profileApi<Extracted>('/items/extracted', 'POST', { turn_id: turn.id, facts });
-      setTurns(rows => rows.map(row => row.id === turn.id ? { ...row, facts_checked: true } : row));
-      setFactNotes(notes => ({ ...notes, [turn.id]: factSummary(result) }));
-    } catch (err) {
-      setFactNotes(notes => ({ ...notes, [turn.id]: 'Факты не извлечены: ' + (err instanceof Error ? err.message : 'ошибка модели') }));
-    }
+  async function extractOnce(turn: Turn, history: Turn[], signal: AbortSignal) {
+    const index = history.findIndex(row => row.id === turn.id);
+    const question = index > 0 ? history[index - 1].reply : null;
+    const facts = parseFacts(await complete(config, extractionMessages(question, turn.prompt), signal));
+    const result = await profileApi<Extracted>('/items/extracted', 'POST', { turn_id: turn.id, facts });
+    setTurns(rows => rows.map(row => row.id === turn.id ? { ...row, facts_checked: true } : row));
+    setFactNotes(notes => ({ ...notes, [turn.id]: factSummary(result) }));
   }
-  async function retryFacts(turn: Turn) {
-    if (busy) return;
-    setBusy(true); setError('');
-    const controller = new AbortController(); abort.current = controller;
-    const timer = setTimeout(() => controller.abort(), 180000);
-    try { await findFacts(turn, turns, controller.signal); }
-    finally { clearTimeout(timer); abort.current = null; setBusy(false); }
+  async function findFacts(turn: Turn, history: Turn[], signal: AbortSignal) {
+    // Facts go to the profile without a button. A failure never loses the saved conversation:
+    // one immediate retry here, and the message is picked up again after the next reply.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { await extractOnce(turn, history, signal); return; }
+      catch (err) {
+        if (signal.aborted || attempt === 1) {
+          setFactNotes(notes => ({ ...notes, [turn.id]: 'Факты пока не извлечены, повторим после следующего ответа. Причина: ' + (err instanceof Error ? err.message : 'ошибка модели') }));
+        }
+        if (signal.aborted) return;
+      }
+    }
   }
   async function run(event?: React.FormEvent) {
     event?.preventDefault(); if (busy || !ready) return;
@@ -112,7 +112,11 @@ export function ChatPage() {
       const answer = { id: pending.id, reply }; setUnsaved(answer);
       const saved = await api<Turn>('/' + pending.id, { reply }, 'PATCH');
       setTurns(rows => rows.map(row => row.id === saved.id ? saved : row)); setUnsaved(null);
-      if (!saved.facts_checked) await findFacts(saved, history.map(row => row.id === saved.id ? saved : row), controller.signal);
+      const updated = history.map(row => row.id === saved.id ? saved : row);
+      if (!saved.facts_checked) await findFacts(saved, updated, controller.signal);
+      // Catch up on earlier answers whose extraction failed or predates this feature.
+      const missed = updated.filter(row => row.id !== saved.id && row.reply && row.facts_checked === false).slice(-3);
+      for (const row of missed) { if (controller.signal.aborted) break; await findFacts(row, updated, controller.signal); }
     } catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подключения'); }
     finally { clearTimeout(timer); abort.current = null; setBusy(false); }
   }
@@ -123,7 +127,7 @@ export function ChatPage() {
     : config.kind === 'api' && provider === 'groq' && !config.key.trim() ? 'Вставьте свой API-ключ Groq.'
     : !config.model.trim() ? 'Выберите модель или введите её название.' : '';
   return <section className="profile-page chat-page"><span className="eyebrow">ЗНАКОМСТВО</span><h1>Карьерное интервью</h1>
-    <p>Расскажите, где учитесь и какие проекты делали. Агент поможет уточнить ваш опыт. История сохраняется в аккаунте. После ответа агент ищет в вашем сообщении навыки, проекты, опыт и образование и предлагает их в профиль — там вы подтверждаете или исправляете каждый факт.</p>
+    <p>Расскажите, где учитесь и какие проекты делали. Агент поможет уточнить ваш опыт. История сохраняется в аккаунте. После ответа агент сам находит в вашем сообщении навыки, проекты, опыт и образование и добавляет их в профиль. Там любую запись можно изменить или удалить.</p>
     {loading && <p role="status">Загружаем историю…</p>}
     {!ready && <div role="status"><p>{historyError || 'Чтобы открыть поле сообщения, проверяем вход в Career Agent и загружаем историю.'}</p>
       {needsLogin && <><Link to="/profile" target="_blank" rel="noreferrer">Войти в аккаунт в новой вкладке</Link><p>После входа вернитесь сюда и повторите проверку. Введённый ключ останется на этой странице.</p></>}
@@ -143,9 +147,8 @@ export function ChatPage() {
       <p>Выбранной модели передаются последние 20 пар сообщений интервью. История хранится в вашем аккаунте Career Agent.</p>
     </fieldset>
     <div className="chat-history" aria-label="История интервью">{turns.length === 0 && ready && <p>Начните с рассказа о себе или напишите «Помоги определить мои интересы».</p>}{turns.map(row => <div key={row.id}><article><strong>Вы</strong><p>{row.prompt}</p></article><article><strong>Агент</strong><p>{row.reply ?? (unsaved?.id === row.id ? unsaved.reply : 'Ответ ещё не получен. Можно повторить запрос.')}</p></article>
-      {(factNotes[row.id] || (row.reply && row.facts_checked === false)) && <div className="chat-facts" role="status">{factNotes[row.id] && <p>{factNotes[row.id]}</p>}
-        {row.facts_checked && <Link to="/profile">Открыть профиль</Link>}
-        {row.reply && row.facts_checked === false && <button className="button secondary" type="button" disabled={busy || !config.model.trim() || !config.base.trim() || (config.kind === 'api' && provider === 'groq' && !config.key.trim())} onClick={() => void retryFacts(row)}>Найти факты в этом сообщении</button>}</div>}</div>)}</div>
+      {factNotes[row.id] && <div className="chat-facts" role="status"><p>{factNotes[row.id]}</p>
+        {row.facts_checked && <Link to="/profile">Открыть профиль</Link>}</div>}</div>)}</div>
     {busy && <p role="status">Ожидаем ответ и сохраняем сообщения…</p>}
     <form onSubmit={event => void run(event)}>
       {sendHint && <p id="chat-send-help" role="status">{sendHint}</p>}

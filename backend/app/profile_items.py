@@ -1,4 +1,4 @@
-"""Structured profile items owned by one user; interview suggestions need confirmation."""
+"""Structured profile items owned by one user; grounded interview facts are saved directly."""
 
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -46,11 +46,6 @@ class NewItem(BaseModel):
 class DataIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     data: dict[str, Any]
-
-
-class ConfirmIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    data: dict[str, Any] | None = None
 
 
 class ExtractedIn(BaseModel):
@@ -184,46 +179,13 @@ def edit_item(
     lock_user(session, user)
     item = owned_item(session, user, item_id)
     if item.status == "rejected":
-        raise HTTPException(409, "Отклонённую запись нельзя изменить")
+        raise HTTPException(409, "Эта запись удалена из профиля")
     values = checked_data(item.kind, data.data)
     key = item_key(item.kind, values)
     if duplicate(session, user, item.kind, key, exclude=item.id):
         raise HTTPException(409, "Такая запись уже есть в профиле")
     item.data, item.item_key, item.updated_at = values, key, datetime.now(UTC)
     session.commit()
-    return item
-
-
-@router.post("/items/{item_id}/confirm", response_model=ItemOut)
-def confirm_item(
-    item_id: str, data: ConfirmIn, user: CurrentUser, session: DB, response: Response
-) -> ProfileItem:
-    response.headers["Cache-Control"] = "no-store"
-    lock_user(session, user)
-    item = owned_item(session, user, item_id)
-    if item.status == "confirmed" and data.data is None:
-        return item  # A repeated confirmation is harmless.
-    if item.status != "suggested":
-        raise HTTPException(409, "Подтвердить можно только предложенную запись")
-    values = item.data if data.data is None else checked_data(item.kind, data.data)
-    key = item_key(item.kind, values)
-    if duplicate(session, user, item.kind, key, exclude=item.id):
-        raise HTTPException(409, "Такая запись уже есть в профиле. Отклоните предложение.")
-    item.data, item.item_key = values, key
-    item.status, item.updated_at = "confirmed", datetime.now(UTC)
-    session.commit()
-    return item
-
-
-@router.post("/items/{item_id}/reject", response_model=ItemOut)
-def reject_item(item_id: str, user: CurrentUser, session: DB, response: Response) -> ProfileItem:
-    response.headers["Cache-Control"] = "no-store"
-    item = owned_item(session, user, item_id)
-    if item.status == "confirmed":
-        raise HTTPException(409, "Подтверждённую запись можно удалить, но не отклонить")
-    if item.status == "suggested":
-        item.status, item.updated_at = "rejected", datetime.now(UTC)
-        session.commit()
     return item
 
 
@@ -238,7 +200,7 @@ def delete_item(item_id: str, user: CurrentUser, session: DB) -> None:
 def save_extracted(
     data: ExtractedIn, user: CurrentUser, session: DB, response: Response
 ) -> ExtractedOut:
-    """Store model suggestions grounded in the user's own message; never confirm them."""
+    """Add facts grounded in the user's own message straight to the profile."""
     response.headers["Cache-Control"] = "no-store"
     lock_user(session, user)
     turn = session.scalar(
@@ -273,7 +235,7 @@ def save_extracted(
         else:
             seen.add((fact.kind, key))
             item = new_item(
-                user, fact.kind, values, "suggested", "interview", fact.evidence, turn.id
+                user, fact.kind, values, "confirmed", "interview", fact.evidence, turn.id
             )
             session.add(item)
             created.append(item)
