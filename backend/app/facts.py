@@ -7,12 +7,12 @@ fact only if its quoted evidence occurs in the user's own saved message.
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Kind = Literal["skill", "project", "experience", "education"]
 KINDS: tuple[str, ...] = ("skill", "project", "experience", "education")
 STATUSES: tuple[str, ...] = ("suggested", "confirmed", "rejected")
-MAX_FACTS_PER_TURN = 10
+MAX_FACTS_PER_TURN = 20
 MAX_ITEMS_PER_USER = 300
 
 
@@ -107,8 +107,31 @@ class EducationFact(EducationItem):
     evidence: Evidence
 
 
+WORK_FORMATS: tuple[str, ...] = ("office", "remote", "hybrid", "any")
+
+
+class PreferenceData(Strict):
+    """A main profile field from the interview; applied to the profile, not stored."""
+
+    field: Literal["full_name", "target_role", "work_format", "location"]
+    value: str = Field(min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def known_work_format(self) -> "PreferenceData":
+        if self.field == "work_format" and self.value not in WORK_FORMATS:
+            raise ValueError("unknown work format")
+        return self
+
+
+class PreferenceFact(Strict):
+    kind: Literal["preference"]
+    data: PreferenceData
+    evidence: Evidence
+
+
 FactIn = Annotated[
-    SkillFact | ProjectFact | ExperienceFact | EducationFact, Field(discriminator="kind")
+    SkillFact | ProjectFact | ExperienceFact | EducationFact | PreferenceFact,
+    Field(discriminator="kind"),
 ]
 
 

@@ -59,7 +59,6 @@ export function ProfileFacts() {
       return <div className="fact-group" key={kind}><h2>{kinds[kind].title}</h2>
         {rows.length === 0 && <p>Пока пусто. Расскажите об этом в интервью — агент сам добавит запись, — или добавьте вручную.</p>}
         {rows.map(item => <article className="fact" key={item.id}><strong>{describe(item.kind, item.data)}</strong>
-          {item.source === 'interview' && <span className="fact-source" title={item.evidence ? `«${item.evidence}»` : undefined}>из интервью</span>}
           {item.kind !== 'skill' && typeof item.data.description === 'string' && item.data.description && <p>{item.data.description}</p>}
           {form(kind, item) ?? <div className="fact-actions">
             <button className="button secondary" disabled={busy} onClick={() => setDraft({ kind, values: toForm(kind, item.data), item })}>Изменить</button>
