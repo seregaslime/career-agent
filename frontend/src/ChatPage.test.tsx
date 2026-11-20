@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ChatPage } from './ChatPage';
 import { groqBase, groqModel } from './llm';
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); sessionStorage.clear(); });
 it.each([401, 502])('keeps the history failure visible after provider setup and retries without losing the key (%s)', async status => {
  let reads = 0;
  vi.stubGlobal('fetch',vi.fn(async (url:string) => {
@@ -106,7 +106,7 @@ it('sends a personal Groq key only to Groq and retries a rate-limited saved turn
  expect(fetch.mock.calls.filter(([url,opts]) => url === '/api/chat' && opts?.method === 'POST')).toHaveLength(1);
  expect(fetch.mock.calls.filter(([url]) => url.startsWith('/api/')).every(([,opts]) => !(opts?.headers as Record<string,string>)?.Authorization)).toBe(true);
 });
-it('clears keys when changing provider or destination, and allows a manual model', async () => {
+it('clears keys when changing provider or destination, allows a manual model and keeps the setup after a reload', async () => {
  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json([])));
  const {unmount} = render(<MemoryRouter><ChatPage /></MemoryRouter>);
  await screen.findByText(/Начните с рассказа/);
@@ -125,9 +125,33 @@ it('clears keys when changing provider or destination, and allows a manual model
  expect(screen.getByLabelText('API-ключ')).toHaveValue('');
  fireEvent.change(screen.getByLabelText('API-ключ'),{target:{value:'temporary-key'}});
  unmount();
+ // A reload keeps the whole setup; the key lives in sessionStorage only, never in localStorage.
+ const {unmount: unmountAgain} = render(<MemoryRouter><ChatPage /></MemoryRouter>);
+ expect(screen.getByLabelText('Режим')).toHaveValue('api');
+ expect(screen.getByLabelText('Провайдер')).toHaveValue('custom');
+ expect(screen.getByLabelText('Адрес сервера')).toHaveValue('https://another.example/v1');
+ expect(screen.getByLabelText('Модель')).toHaveValue('my-model');
+ expect(screen.getByLabelText('API-ключ')).toHaveValue('temporary-key');
+ expect(JSON.stringify(localStorage)).not.toContain('temporary-key');
+ fireEvent.click(screen.getByRole('button',{name:'Очистить ключ'}));
+ unmountAgain();
  render(<MemoryRouter><ChatPage /></MemoryRouter>);
- fireEvent.change(screen.getByLabelText('Режим'),{target:{value:'api'}});
+ expect(screen.getByLabelText('Модель')).toHaveValue('my-model');
  expect(screen.getByLabelText('API-ключ')).toHaveValue('');
+});
+
+it('restores a Groq setup only with its own address and ignores broken storage', async () => {
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json([])));
+ localStorage.setItem('career-agent.llm', JSON.stringify({kind:'api',provider:'groq',base:'https://evil.example/v1',model:'qwen/qwen3.8-27b'}));
+ sessionStorage.setItem('career-agent.llm-key', JSON.stringify({base:'https://evil.example/v1',key:'leaked'}));
+ const {unmount} = render(<MemoryRouter><ChatPage /></MemoryRouter>);
+ expect(screen.getByLabelText('Адрес сервера')).toHaveValue(groqBase);
+ expect(screen.getByLabelText('API-ключ')).toHaveValue('');
+ unmount();
+ localStorage.setItem('career-agent.llm', '{not json');
+ render(<MemoryRouter><ChatPage /></MemoryRouter>);
+ expect(screen.getByLabelText('Режим')).toHaveValue('ollama');
+ expect(screen.getByLabelText('Адрес сервера')).toHaveValue('http://127.0.0.1:11434');
 });
 it('silently moves every saved answer into the profile: the new reply first, then the backlog oldest first', async () => {
  type T = {id:string;prompt:string;reply:string|null;facts_checked:boolean;created_at:string};

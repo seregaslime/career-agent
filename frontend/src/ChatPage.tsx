@@ -4,6 +4,31 @@ import { extractionMessages, parseFacts, profileApi } from './facts';
 import { complete, groqBase, groqModel, interviewPrompt, listModels, type Connection, type Message } from './llm';
 
 type Turn = { id: string; prompt: string; reply: string | null; created_at: string; facts_checked?: boolean };
+const settingsKey = 'career-agent.llm';
+const keyKey = 'career-agent.llm-key';
+type Saved = { config: Connection; provider: 'groq' | 'custom' };
+/** Restores the connection: settings from localStorage, the key from sessionStorage (until the tab closes). */
+function loadSaved(): Saved {
+  const fallback: Saved = { config: { kind: 'ollama', base: 'http://127.0.0.1:11434', model: '', key: '' }, provider: 'groq' };
+  try {
+    const raw = JSON.parse(localStorage.getItem(settingsKey) ?? 'null');
+    if (!raw || (raw.kind !== 'ollama' && raw.kind !== 'api')) return fallback;
+    const provider = raw.kind === 'api' && raw.provider === 'custom' ? 'custom' : 'groq';
+    const base = raw.kind === 'api' && provider === 'groq' ? groqBase : typeof raw.base === 'string' ? raw.base.slice(0, 500) : '';
+    const model = typeof raw.model === 'string' ? raw.model.slice(0, 200) : '';
+    const stored = JSON.parse(sessionStorage.getItem(keyKey) ?? 'null');
+    // The key is only restored for the address it was entered for.
+    const key = raw.kind === 'api' && stored?.base === base && typeof stored.key === 'string' ? stored.key.slice(0, 1000) : '';
+    return { config: { kind: raw.kind, base, model, key }, provider };
+  } catch { return fallback; }
+}
+function save({ config, provider }: Saved) {
+  try {
+    localStorage.setItem(settingsKey, JSON.stringify({ kind: config.kind, provider, base: config.base, model: config.model }));
+    if (config.kind === 'api' && config.key) sessionStorage.setItem(keyKey, JSON.stringify({ base: config.base, key: config.key }));
+    else sessionStorage.removeItem(keyKey);
+  } catch { /* Storage may be disabled; the page still works without restoring settings. */ }
+}
 class SignInRequired extends Error {}
 async function api<T>(path = '', body?: object, method = 'POST', signal?: AbortSignal): Promise<T> {
   let result: Response;
@@ -16,8 +41,10 @@ async function api<T>(path = '', body?: object, method = 'POST', signal?: AbortS
   return result.json();
 }
 export function ChatPage() {
-  const [config, setConfig] = useState<Connection>({ kind: 'ollama', base: 'http://127.0.0.1:11434', model: '', key: '' });
-  const [provider, setProvider] = useState<'groq' | 'custom'>('groq');
+  const [initial] = useState(loadSaved);
+  const [config, setConfig] = useState<Connection>(initial.config);
+  const [provider, setProvider] = useState<'groq' | 'custom'>(initial.provider);
+  useEffect(() => save({ config, provider }), [config, provider]);
   const [models, setModels] = useState<string[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState('');
@@ -45,7 +72,7 @@ export function ChatPage() {
     let active = true;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
-    api<Turn[]>('', undefined, 'GET', controller.signal).then(rows => { if (active) { setTurns(rows); setReady(true); setHistoryError(''); setNeedsLogin(false); } })
+    api<Turn[]>('', undefined, 'GET', controller.signal).then(rows => { if (active) { setTurns(rows); setReady(true); setHistoryError(''); setNeedsLogin(false); setDrainRequest(r => ({ count: r.count + 1 })); } })
       .catch(err => { if (active) { setReady(false); setHistoryError(err.message); setNeedsLogin(err instanceof SignInRequired); } }).finally(() => { clearTimeout(timer); if (active) setLoading(false); });
     return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, [historyAttempt]);
@@ -158,7 +185,7 @@ export function ChatPage() {
       {config.kind === 'api' && <><label>API-ключ<input type="password" autoComplete="off" spellCheck={false} value={config.key} maxLength={1000} onChange={e => update({ key: e.target.value })} /></label><button className="button secondary" disabled={!config.key} onClick={() => update({ key: '' })}>Очистить ключ</button></>}
       <button className="button secondary" disabled={!config.base.trim() || (config.kind === 'api' && provider === 'groq' && !config.key.trim())} onClick={() => void check()}>Проверить подключение</button>
       <label>Модель<input list="llm-models" value={config.model} maxLength={200} onChange={e => setConfig(c => ({ ...c, model: e.target.value }))} /></label><datalist id="llm-models">{models.map(name => <option key={name} value={name} />)}</datalist>
-      <p>{config.kind === 'ollama' ? 'Запустите Ollama с опубликованным портом и разрешите CORS для адреса нашего сайта. Модель вызывается вашим браузером.' : 'Используйте свой ключ провайдера. Запросы идут напрямую из браузера; ключ не передаётся нашему backend и не сохраняется в браузерном хранилище. При уходе со страницы ключ очищается.'}</p>
+      <p>{config.kind === 'ollama' ? 'Запустите Ollama с опубликованным портом и разрешите CORS для адреса нашего сайта. Модель вызывается вашим браузером.' : 'Используйте свой ключ провайдера. Запросы идут напрямую из браузера; ключ не передаётся нашему backend. Ключ хранится только в этой вкладке до её закрытия, режим и модель запоминаются в браузере.'}</p>
       {config.kind === 'api' && <><p>Поддерживается OpenAI-совместимый Chat Completions API. Укажите базовый URL, обычно с /v1, без /chat/completions. Если список моделей недоступен, введите модель вручную. Провайдер должен разрешать запросы браузера (CORS).</p>{provider === 'groq' && <p><a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Создать личный ключ Groq</a>. Лимиты относятся к вашему аккаунту Groq. Входной контекст и ответ вместе расходуют квоту токенов; история пока ограничена 20 последними парами сообщений, а не точным числом токенов.</p>}</>}
       {config.kind === 'api' && <p role="note">Каждое сообщение и переданный контекст расходуют токены и квоту вашего API. После ответа выполняется ещё один короткий запрос — поиск фактов в вашем сообщении. Стоимость зависит от тарифа провайдера.</p>}
       <p>Выбранной модели передаются последние 20 пар сообщений интервью. История хранится в вашем аккаунте Career Agent.</p>
