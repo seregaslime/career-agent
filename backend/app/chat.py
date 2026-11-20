@@ -18,6 +18,7 @@ class TurnOut(BaseModel):
     prompt: str
     reply: str | None
     created_at: datetime
+    facts_checked: bool
 
 
 class NewTurn(BaseModel):

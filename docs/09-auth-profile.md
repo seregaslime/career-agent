@@ -9,7 +9,7 @@
 | POST | /api/auth/logout | Отзывает текущую сессию и удаляет cookie |
 | GET | /api/auth/me | ID и email текущего пользователя; без входа 401 |
 | GET | /api/profile | Только свой профиль |
-| PATCH | /api/profile | Частичное обновление своих full_name, target_role, education, about |
+| PATCH | /api/profile | Частичное обновление своих full_name, target_role, education, about, work_format, location |
 
 Пароль: 8–128 символов. Email нормализуется; Подтверждение email и восстановление через почту отложены. Восстановление по резервным кодам реализовано. Для учебной версии использовать отдельный пароль. Поля owner/user_id не принимаются в запросе профиля. Авторизация только по серверной сессии.
 
