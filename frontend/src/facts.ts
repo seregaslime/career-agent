@@ -164,10 +164,10 @@ export function toForm(kind: Kind, data: FactData): Record<string, string> {
   }));
 }
 
-export async function profileApi<T>(path: string, method = 'GET', body?: object): Promise<T> {
+export async function profileApi<T>(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
-    response = await fetch('/api/profile' + path, { method, credentials: 'same-origin', signal: AbortSignal.timeout(30000), headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    response = await fetch('/api/profile' + path, { method, credentials: 'same-origin', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000), headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
   } catch (error) { throw new Error('Сервер профиля не ответил. Повторите попытку.', { cause: error }); }
   if (response.status === 401) throw new Error('Войдите в аккаунт, чтобы работать с профилем.');
   if (response.status >= 500) throw new Error('Сервер профиля временно недоступен. Повторите позже.');

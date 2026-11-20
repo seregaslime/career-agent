@@ -9,6 +9,7 @@ export function endpoint(config: Connection) {
   if (config.kind === 'ollama' && !local) throw new Error('Для Ollama укажите localhost или 127.0.0.1');
   return url.href.replace(/\/$/, '');
 }
+export class RateLimitError extends Error {}
 async function call(config: Connection, path: string, body?: object, signal?: AbortSignal) {
   const headers: Record<string, string> = {};
   if (body) headers['Content-Type'] = 'application/json';
@@ -26,7 +27,7 @@ async function call(config: Connection, path: string, body?: object, signal?: Ab
       const retry = result.headers?.get('retry-after');
       const seconds = retry && /^\d+$/.test(retry) ? Number(retry) : retry ? Math.ceil((Date.parse(retry) - Date.now()) / 1000) : NaN;
       const wait = Number.isFinite(seconds) && seconds > 0 && seconds <= 86400 ? ` Повторите через ${seconds} сек.` : ' Подождите и повторите вручную; суточная квота может потребовать более долгого ожидания.';
-      throw new Error('Достигнут лимит запросов или токенов вашего API (HTTP 429).' + wait + ' Автоматического повтора нет.');
+      throw new RateLimitError('Достигнут лимит запросов или токенов вашего API (HTTP 429).' + wait + ' Автоматического повтора нет.');
     }
     if (result.status === 404) throw new Error('API не нашёл адрес или модель (HTTP 404). Проверьте базовый URL и название модели.');
     throw new Error(`Модель вернула HTTP ${result.status}. Проверьте модель, ключ и настройки сервера.`);

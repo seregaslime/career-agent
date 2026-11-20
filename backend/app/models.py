@@ -41,6 +41,9 @@ class Profile(Base):
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
+    preference_versions: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, server_default="{}"
+    )
     full_name: Mapped[str] = mapped_column(String(120), default="")
     target_role: Mapped[str] = mapped_column(String(120), default="")
     education: Mapped[str] = mapped_column(Text, default="")

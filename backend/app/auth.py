@@ -226,11 +226,16 @@ def get_profile(user: CurrentUser, session: DB, response: Response) -> Profile:
 def update_profile(
     data: ProfileData, user: CurrentUser, session: DB, response: Response
 ) -> Profile:
+    session.scalar(select(User).where(User.id == user.id).with_for_update())
     profile = session.get(Profile, user.id)
     if profile is None:
         raise HTTPException(404, "Профиль не найден")
+    versions = dict(profile.preference_versions)
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(profile, key, value)
+        if key in {"full_name", "target_role", "work_format", "location"}:
+            versions[key] = {"at": datetime.now(UTC).isoformat(), "id": ""}
+    profile.preference_versions = versions
     session.commit()
     session.refresh(profile)
     response.headers["Cache-Control"] = "no-store"

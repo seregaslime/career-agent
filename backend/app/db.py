@@ -2,7 +2,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from app.config import Settings
 
-SCHEMA_VERSION = "0009_rescan_interview_facts"
+SCHEMA_VERSION = "0010_preference_versions"
 
 
 def make_engine(settings: Settings) -> Engine:

@@ -57,7 +57,7 @@ class ExtractedIn(BaseModel):
 
 class Skipped(BaseModel):
     index: int
-    reason: Literal["evidence", "duplicate", "limit"]
+    reason: Literal["evidence", "duplicate", "limit", "stale"]
 
 
 class ExtractedOut(BaseModel):
@@ -232,10 +232,20 @@ def save_extracted(
             # The latest grounded statement wins; the user can still edit the field.
             if not evidence_found(fact.evidence, turn.prompt):
                 skipped.append(Skipped(index=index, reason="evidence"))
-            elif profile is not None and getattr(profile, fact.data.field) != fact.data.value:
-                setattr(profile, fact.data.field, fact.data.value)
-                if fact.data.field not in profile_fields:
-                    profile_fields.append(fact.data.field)
+            elif profile is not None:
+                versions = dict(profile.preference_versions)
+                previous = versions.get(fact.data.field)
+                version = (turn.created_at, turn.id)
+                if previous and version <= (datetime.fromisoformat(previous["at"]), previous["id"]):
+                    skipped.append(Skipped(index=index, reason="stale"))
+                    continue
+                # Advance even for an unchanged value: older messages must not undo it.
+                versions[fact.data.field] = {"at": turn.created_at.isoformat(), "id": turn.id}
+                profile.preference_versions = versions
+                if getattr(profile, fact.data.field) != fact.data.value:
+                    setattr(profile, fact.data.field, fact.data.value)
+                    if fact.data.field not in profile_fields:
+                        profile_fields.append(fact.data.field)
             continue
         values = fact.data.model_dump()
         key = item_key(fact.kind, values)

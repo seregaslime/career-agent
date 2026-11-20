@@ -142,3 +142,90 @@ def test_grounded_interview_facts_go_straight_to_the_editable_profile() -> None:
         }
         too_many = {"turn_id": other["id"], "facts": [skill("Python", "x y")] * 21}
         assert a.post("/api/profile/items/extracted", json=too_many).status_code == 422
+
+
+@pytest.mark.integration
+def test_preferences_follow_message_order_per_field_and_preserve_manual_edits() -> None:
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Requires disposable PostgreSQL")
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        env={**os.environ, "DATABASE_URL": url},
+        check=True,
+    )
+    app = create_app(Settings(database_url=SecretStr(url)))
+    with TestClient(app, base_url="https://testserver") as client:
+        assert (
+            client.post(
+                "/api/auth/register",
+                json={
+                    "email": f"preference-{uuid4()}@example.com",
+                    "password": "synthetic-password",
+                },
+            ).status_code
+            == 201
+        )
+
+        def turn(prompt: str) -> str:
+            ident = str(uuid4())
+            assert client.post("/api/chat", json={"id": ident, "prompt": prompt}).status_code == 200
+            assert (
+                client.patch(
+                    f"/api/chat/{ident}", json={"reply": "Расскажите подробнее"}
+                ).status_code
+                == 200
+            )
+            return ident
+
+        def extract(ident: str, field: str, value: str, evidence: str) -> dict:
+            response = client.post(
+                "/api/profile/items/extracted",
+                json={
+                    "turn_id": ident,
+                    "facts": [
+                        {
+                            "kind": "preference",
+                            "data": {"field": field, "value": value},
+                            "evidence": evidence,
+                        }
+                    ],
+                },
+            )
+            assert response.status_code == 200
+            return response.json()
+
+        old = turn("Раньше хотел офис в Казани")
+        city = turn("Живу в Казани")
+        new = turn("Теперь хочу удалённо")
+        assert extract(new, "work_format", "remote", "хочу удалённо")["profile_fields"] == [
+            "work_format"
+        ]
+        stale = extract(old, "work_format", "office", "хотел офис")
+        assert stale["skipped"] == [{"index": 0, "reason": "stale"}]
+        assert client.get("/api/profile").json()["work_format"] == "remote"
+
+        # Independent fields still fill from old history, and an unchanged value
+        # advances its watermark (otherwise an intermediate message could undo it).
+        assert extract(city, "location", "Казань", "в Казани")["profile_fields"] == ["location"]
+        middle = turn("Предпочитаю офис")
+        latest = turn("По-прежнему хочу удалённо")
+        assert extract(latest, "work_format", "remote", "хочу удалённо")["profile_fields"] == []
+        assert (
+            extract(middle, "work_format", "office", "Предпочитаю офис")["skipped"][0]["reason"]
+            == "stale"
+        )
+        assert client.get("/api/profile").json()["work_format"] == "remote"
+
+        backlog = turn("Мне подходит офис")
+        assert client.patch("/api/profile", json={"work_format": "hybrid"}).status_code == 200
+        assert (
+            extract(backlog, "work_format", "office", "подходит офис")["skipped"][0]["reason"]
+            == "stale"
+        )
+        future = turn("Передумал, хочу офис")
+        assert extract(future, "work_format", "office", "хочу офис")["profile_fields"] == [
+            "work_format"
+        ]
+        assert client.get("/api/profile").json()["work_format"] == "office"
+        assert client.get("/api/profile").json()["location"] == "Казань"
