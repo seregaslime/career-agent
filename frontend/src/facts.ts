@@ -70,7 +70,7 @@ export function parseFacts(output: string): Fact[] {
   let parsed: unknown;
   try { parsed = start >= 0 && end > start ? JSON.parse(body.slice(start, end + 1)) : undefined; } catch { parsed = undefined; }
   const rows = parsed !== null && typeof parsed === 'object' ? (parsed as { facts?: unknown }).facts : undefined;
-  if (!Array.isArray(rows)) throw new Error('Модель вернула факты не в формате JSON. Повторите поиск фактов или выберите другую модель.');
+  if (!Array.isArray(rows)) throw new Error('Модель вернула факты не в формате JSON. Если это повторяется, выберите другую модель.');
   const facts: Fact[] = [];
   for (const row of rows) {
     if (row === null || typeof row !== 'object') continue;

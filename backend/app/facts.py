@@ -1,6 +1,6 @@
 """Structured profile facts: schemas, normalization and grounding checks.
 
-Model output arrives from the browser and is untrusted. The server accepts a suggested
+Model output arrives from the browser and is untrusted. The server accepts an extracted
 fact only if its quoted evidence occurs in the user's own saved message.
 """
 
