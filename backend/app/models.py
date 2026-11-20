@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -32,6 +33,11 @@ class LoginSession(Base):
 
 class Profile(Base):
     __tablename__ = "profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "work_format IN ('', 'office', 'remote', 'hybrid', 'any')", name="profile_work_format"
+        ),
+    )
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
@@ -39,6 +45,8 @@ class Profile(Base):
     target_role: Mapped[str] = mapped_column(String(120), default="")
     education: Mapped[str] = mapped_column(Text, default="")
     about: Mapped[str] = mapped_column(Text, default="")
+    work_format: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    location: Mapped[str] = mapped_column(String(120), default="", server_default="")
 
 
 class AdminEvent(Base):
@@ -64,3 +72,39 @@ class ChatTurn(Base):
     prompt: Mapped[str] = mapped_column(Text)
     reply: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    facts_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    @property
+    def facts_checked(self) -> bool:
+        return self.facts_checked_at is not None
+
+
+class ProfileItem(Base):
+    """A structured profile fact; only confirmed items may feed a resume."""
+
+    __tablename__ = "profile_items"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('skill', 'project', 'experience', 'education')", name="profile_item_kind"
+        ),
+        CheckConstraint(
+            "status IN ('suggested', 'confirmed', 'rejected')", name="profile_item_status"
+        ),
+        CheckConstraint("source IN ('manual', 'interview')", name="profile_item_source"),
+        Index("ix_profile_items_user_kind_key", "user_id", "kind", "item_key"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(20))
+    data: Mapped[dict[str, Any]] = mapped_column(JSON)
+    item_key: Mapped[str] = mapped_column(String(400))
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    turn_id: Mapped[str | None] = mapped_column(
+        ForeignKey("chat_turns.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

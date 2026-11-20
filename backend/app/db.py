@@ -2,7 +2,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from app.config import Settings
 
-SCHEMA_VERSION = "0006_chat"
+SCHEMA_VERSION = "0007_profile_items"
 
 
 def make_engine(settings: Settings) -> Engine:
