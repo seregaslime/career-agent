@@ -4,6 +4,36 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { ChatPage } from './ChatPage';
 import { groqBase, groqModel } from './llm';
 afterEach(() => vi.unstubAllGlobals());
+it.each([401, 502])('keeps the history failure visible after provider setup and retries without losing the key (%s)', async status => {
+ let reads = 0;
+ vi.stubGlobal('fetch',vi.fn(async (url:string) => {
+   if (url === '/api/chat') {
+     reads++;
+     return reads === 1 ? new Response('Unavailable',{status}) : Response.json([]);
+   }
+   if (url === groqBase+'/models') return Response.json({data:[{id:groqModel}]});
+   throw new Error('Unexpected request');
+ }));
+ render(<MemoryRouter><ChatPage /></MemoryRouter>);
+ const reason = status === 401 ? /API-ключ модели не заменяет вход/ : /Сервер интервью временно недоступен/;
+ await screen.findByText(reason);
+ expect(screen.getByLabelText('Ваше сообщение')).toBeDisabled();
+ if (status === 401) expect(screen.getByRole('link',{name:'Войти в аккаунт в новой вкладке'})).toHaveAttribute('target','_blank');
+ else expect(screen.queryByRole('link',{name:'Войти в аккаунт в новой вкладке'})).not.toBeInTheDocument();
+ fireEvent.change(screen.getByLabelText('Режим'),{target:{value:'api'}});
+ fireEvent.change(screen.getByLabelText('API-ключ'),{target:{value:'synthetic-key'}});
+ fireEvent.click(screen.getByRole('button',{name:'Проверить подключение'}));
+ await screen.findByText(/Список моделей получен/);
+ expect(screen.getByText(reason)).toBeInTheDocument();
+ expect(screen.getByLabelText('Ваше сообщение')).toBeDisabled();
+ fireEvent.click(screen.getByRole('button',{name:'Повторить проверку входа и истории'}));
+ await waitFor(() => expect(screen.getByLabelText('Ваше сообщение')).toBeEnabled());
+ expect(screen.getByLabelText('API-ключ')).toHaveValue('synthetic-key');
+ expect(screen.getByLabelText('Модель')).toHaveValue(groqModel);
+ expect(reads).toBe(2);
+ expect(screen.queryByText(reason)).not.toBeInTheDocument();
+ expect(screen.getByRole('button',{name:'Отправить'})).toBeEnabled();
+});
 it('persists a user message before inference and can retry a failed model', async () => {
  let turns: {id:string;prompt:string;reply:string|null}[] = [];
  let attempts = 0;
@@ -30,7 +60,6 @@ it('persists a user message before inference and can retry a failed model', asyn
  await screen.findByText(/Начните с рассказа/);
  fireEvent.click(screen.getByRole('button',{name:'Проверить подключение'}));
  await screen.findByText('Список моделей получен. Выберите модель; генерация проверяется при отправке сообщения.');
- fireEvent.click(screen.getByRole('checkbox'));
  fireEvent.change(screen.getByLabelText('Ваше сообщение'),{target:{value:'Учусь, делаю бота'}});
  fireEvent.click(screen.getByRole('button',{name:'Отправить'}));
  await screen.findByRole('alert');
@@ -63,10 +92,11 @@ it('sends a personal Groq key only to Groq and retries a rate-limited saved turn
  await screen.findByText(/Начните с рассказа/);
  fireEvent.change(screen.getByLabelText('Режим'),{target:{value:'api'}});
  expect(screen.getByLabelText('Адрес сервера')).toHaveValue(groqBase);
+ expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+ expect(screen.getByRole('note')).toBeInTheDocument();
  fireEvent.change(screen.getByLabelText('API-ключ'),{target:{value:'synthetic-personal-key'}});
  fireEvent.click(screen.getByRole('button',{name:'Проверить подключение'}));
  await screen.findByText(/Список моделей получен/);
- fireEvent.click(screen.getByRole('checkbox'));
  fireEvent.change(screen.getByLabelText('Ваше сообщение'),{target:{value:'Сделал учебный бот'}});
  fireEvent.click(screen.getByRole('button',{name:'Отправить'}));
  expect(await screen.findByRole('alert')).toHaveTextContent('10 сек.');
@@ -76,24 +106,20 @@ it('sends a personal Groq key only to Groq and retries a rate-limited saved turn
  expect(fetch.mock.calls.filter(([url,opts]) => url === '/api/chat' && opts?.method === 'POST')).toHaveLength(1);
  expect(fetch.mock.calls.filter(([url]) => url.startsWith('/api/')).every(([,opts]) => !(opts?.headers as Record<string,string>)?.Authorization)).toBe(true);
 });
-it('clears keys and consent when changing provider or destination, and allows a manual model', async () => {
+it('clears keys when changing provider or destination, and allows a manual model', async () => {
  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json([])));
  const {unmount} = render(<MemoryRouter><ChatPage /></MemoryRouter>);
  await screen.findByText(/Начните с рассказа/);
  fireEvent.change(screen.getByLabelText('Режим'),{target:{value:'api'}});
  fireEvent.change(screen.getByLabelText('API-ключ'),{target:{value:'synthetic-key'}});
- fireEvent.click(screen.getByRole('checkbox'));
  fireEvent.change(screen.getByLabelText('Провайдер'),{target:{value:'custom'}});
  expect(screen.getByLabelText('API-ключ')).toHaveValue('');
- expect(screen.getByRole('checkbox')).not.toBeChecked();
  fireEvent.change(screen.getByLabelText('Адрес сервера'),{target:{value:'https://provider.example/v1'}});
  fireEvent.change(screen.getByLabelText('API-ключ'),{target:{value:'another-synthetic-key'}});
  fireEvent.change(screen.getByLabelText('Модель'),{target:{value:'my-model'}});
- fireEvent.click(screen.getByRole('checkbox'));
  expect(screen.getByRole('button',{name:'Отправить'})).toBeEnabled();
  fireEvent.change(screen.getByLabelText('Адрес сервера'),{target:{value:'https://another.example/v1'}});
  expect(screen.getByLabelText('API-ключ')).toHaveValue('');
- expect(screen.getByRole('checkbox')).not.toBeChecked();
  fireEvent.change(screen.getByLabelText('API-ключ'),{target:{value:'temporary-key'}});
  fireEvent.click(screen.getByRole('button',{name:'Очистить ключ'}));
  expect(screen.getByLabelText('API-ключ')).toHaveValue('');
