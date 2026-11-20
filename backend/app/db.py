@@ -2,7 +2,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from app.config import Settings
 
-SCHEMA_VERSION = "0007_profile_items"
+SCHEMA_VERSION = "0008_auto_confirm_facts"
 
 
 def make_engine(settings: Settings) -> Engine:
