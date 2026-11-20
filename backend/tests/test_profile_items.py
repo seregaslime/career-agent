@@ -134,6 +134,11 @@ def test_grounded_interview_facts_go_straight_to_the_editable_profile() -> None:
         assert a.patch(f"/api/chat/{turn['id']}", json=reply).status_code == 200
         assert a.post("/api/chat", json=other).status_code == 200
         empty = a.post("/api/profile/items/extracted", json={"turn_id": other["id"], "facts": []})
-        assert empty.json() == {"items": [], "skipped": [], "already_processed": False}
-        too_many = {"turn_id": other["id"], "facts": [skill("Python", "x y")] * 11}
+        assert empty.json() == {
+            "items": [],
+            "skipped": [],
+            "already_processed": False,
+            "profile_fields": [],
+        }
+        too_many = {"turn_id": other["id"], "facts": [skill("Python", "x y")] * 21}
         assert a.post("/api/profile/items/extracted", json=too_many).status_code == 422

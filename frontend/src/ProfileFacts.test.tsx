@@ -35,7 +35,7 @@ it('shows interview facts directly in the profile and lets the user edit and del
   render(<ProfileFacts />);
   const skills = (await screen.findByRole('heading', { name: 'Навыки' })).parentElement as HTMLElement;
   expect(within(skills).getByText('Python')).toBeInTheDocument();
-  expect(within(skills).getByText('из интервью')).toHaveAttribute('title', '«бота на Python»');
+  expect(screen.queryByText('из интервью')).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Предложено из интервью' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Подтвердить|Отклонить/ })).not.toBeInTheDocument();
 

@@ -15,11 +15,12 @@ from app.facts import (
     MAX_ITEMS_PER_USER,
     FactIn,
     Kind,
+    PreferenceFact,
     evidence_found,
     item_key,
     validate_data,
 )
-from app.models import ChatTurn, ProfileItem, User
+from app.models import ChatTurn, Profile, ProfileItem, User
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -63,6 +64,7 @@ class ExtractedOut(BaseModel):
     items: list[ItemOut]
     skipped: list[Skipped]
     already_processed: bool
+    profile_fields: list[str] = []
 
 
 def lock_user(session: Session, user: User) -> None:
@@ -222,8 +224,19 @@ def save_extracted(
     created: list[ProfileItem] = []
     skipped: list[Skipped] = []
     seen: set[tuple[str, str]] = set()
+    profile_fields: list[str] = []
+    profile = session.get(Profile, user.id)
     room = MAX_ITEMS_PER_USER - item_count(session, user)
     for index, fact in enumerate(data.facts):
+        if isinstance(fact, PreferenceFact):
+            # The latest grounded statement wins; the user can still edit the field.
+            if not evidence_found(fact.evidence, turn.prompt):
+                skipped.append(Skipped(index=index, reason="evidence"))
+            elif profile is not None and getattr(profile, fact.data.field) != fact.data.value:
+                setattr(profile, fact.data.field, fact.data.value)
+                if fact.data.field not in profile_fields:
+                    profile_fields.append(fact.data.field)
+            continue
         values = fact.data.model_dump()
         key = item_key(fact.kind, values)
         if not evidence_found(fact.evidence, turn.prompt):
@@ -245,4 +258,5 @@ def save_extracted(
         items=[ItemOut.model_validate(item) for item in created],
         skipped=skipped,
         already_processed=False,
+        profile_fields=profile_fields,
     )

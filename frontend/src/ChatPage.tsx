@@ -4,9 +4,9 @@ import { extractionMessages, parseFacts, profileApi, type Item } from './facts';
 import { complete, groqBase, groqModel, interviewPrompt, listModels, type Connection, type Message } from './llm';
 
 type Turn = { id: string; prompt: string; reply: string | null; created_at: string; facts_checked?: boolean };
-type Extracted = { items: Item[]; skipped: { index: number; reason: string }[]; already_processed: boolean };
+type Extracted = { items: Item[]; skipped: { index: number; reason: string }[]; already_processed: boolean; profile_fields?: string[] };
 function factSummary(result: Extracted) {
-  const found = result.items.length;
+  const found = result.items.length + (result.profile_fields?.length ?? 0);
   const ungrounded = result.skipped.filter(row => row.reason === 'evidence').length;
   const main = found ? `Добавлено в профиль: ${found}. Изменить или удалить записи можно в профиле.` : 'Новых фактов для профиля в этом сообщении нет.';
   return ungrounded ? `${main} Не подтверждено цитатой из сообщения и пропущено: ${ungrounded}.` : main;
@@ -65,7 +65,7 @@ export function ChatPage() {
   async function extractOnce(turn: Turn, history: Turn[], signal: AbortSignal) {
     const index = history.findIndex(row => row.id === turn.id);
     const question = index > 0 ? history[index - 1].reply : null;
-    const facts = parseFacts(await complete(config, extractionMessages(question, turn.prompt), signal));
+    const facts = parseFacts(await complete(config, extractionMessages(question, turn.prompt), signal, 2000), turn.prompt);
     const result = await profileApi<Extracted>('/items/extracted', 'POST', { turn_id: turn.id, facts });
     setTurns(rows => rows.map(row => row.id === turn.id ? { ...row, facts_checked: true } : row));
     setFactNotes(notes => ({ ...notes, [turn.id]: factSummary(result) }));
@@ -115,7 +115,7 @@ export function ChatPage() {
       const updated = history.map(row => row.id === saved.id ? saved : row);
       if (!saved.facts_checked) await findFacts(saved, updated, controller.signal);
       // Catch up on earlier answers whose extraction failed or predates this feature.
-      const missed = updated.filter(row => row.id !== saved.id && row.reply && row.facts_checked === false).slice(-3);
+      const missed = updated.filter(row => row.id !== saved.id && row.reply && row.facts_checked === false).slice(-5);
       for (const row of missed) { if (controller.signal.aborted) break; await findFacts(row, updated, controller.signal); }
     } catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подключения'); }
     finally { clearTimeout(timer); abort.current = null; setBusy(false); }
