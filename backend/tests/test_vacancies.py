@@ -93,6 +93,9 @@ def test_open_data_normalization_cache_filters_and_detail(monkeypatch: pytest.Mo
         unknown["employment"] = "Полная занятость"
         normalized = vacancies.normalize(unknown)
         assert normalized.experience == "" and normalized.work_formats == []
+        experienced = sample()
+        experienced["requirement"] = {"experience": 3}
+        assert vacancies.normalize(experienced).experience == "between3And6"
 
 
 def test_invalid_upstream_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:

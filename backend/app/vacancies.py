@@ -96,7 +96,7 @@ def normalize(row: dict[str, Any]) -> Vacancy:
             "noExperience"
             if years == 0
             else "between1And3"
-            if years <= 3
+            if years < 3
             else "between3And6"
             if years <= 6
             else "moreThan6"
