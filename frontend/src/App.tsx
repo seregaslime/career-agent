@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes, Link } from 'react-router-dom';
+import { ResumePage } from './ResumePage';
 import { ChatPage } from './ChatPage';
 import { AdminPage } from './AdminPage';
 import { RecoveryPage } from './RecoveryPage';
@@ -15,7 +16,7 @@ const steps = [
 
 function Home() {
   return <>
-    <div className="page-heading"><span className="eyebrow">ВАШ КАРЬЕРНЫЙ МАРШРУТ</span><span className="version">Версия 0.2 · Личный профиль</span></div>
+    <div className="page-heading"><span className="eyebrow">ВАШ КАРЬЕРНЫЙ МАРШРУТ</span><span className="version">Версия 0.3 · Резюме из профиля</span></div>
     <section className="hero">
       <div className="hero-copy"><span className="pill">От интереса — к первому шагу</span>
         <h1>У вашего опыта<br />есть <em>направление.</em></h1>
@@ -32,7 +33,7 @@ function Home() {
     <section className="route-section"><div className="section-heading"><h2>Как устроен маршрут</h2><span>4 шага к ясности</span></div>
       <div className="step-grid">{steps.map(step => <Link to={step.path} className="step-card" key={step.path}>
         <div className="step-top"><span>{step.number}</span><span className="step-icon">{step.icon}</span></div>
-        <h3>{step.title}</h3><p>{step.text}</p><span className="step-link">{['/profile', '/chat', '/vacancies'].includes(step.path) ? 'Открыть' : 'Скоро'} <span>↗</span></span>
+        <h3>{step.title}</h3><p>{step.text}</p><span className="step-link">{['/profile', '/chat', '/vacancies', '/resume'].includes(step.path) ? 'Открыть' : 'Скоро'} <span>↗</span></span>
       </Link>)}</div>
     </section>
     <ServiceStatus />
@@ -53,6 +54,6 @@ export function App() {
     </nav><div className="sidebar-note"><span>МАЛЕНЬКИЕ ШАГИ, БОЛЬШИЕ ПЕРЕМЕНЫ</span><p>Не обязательно знать весь путь, чтобы начать.</p></div>
     <div className="sidebar-footer"><span className="live-dot" />Учебный проект · MVP</div>
   </aside><div className="main-wrap"><header className="topbar"><span>Личное пространство <span className="separator">/</span> Карьерный маршрут</span><Link className="build-label" to="/profile">Профиль / Вход</Link></header>
-    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} /><Route path="/recover" element={<RecoveryPage />} /><Route path="/chat" element={<ChatPage />} /><Route path="/admin" element={<AdminPage />} /><Route path="/vacancies" element={<VacanciesPage />} /><Route path="/vacancies/:source/:vacancyId" element={<VacancyPage />} />{steps.filter(s => s.path !== '/profile' && s.path !== '/chat' && s.path !== '/vacancies').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
+    <main><Routes><Route path="/" element={<Home />} /><Route path="/profile" element={<ProfilePage />} /><Route path="/recover" element={<RecoveryPage />} /><Route path="/chat" element={<ChatPage />} /><Route path="/resume" element={<ResumePage />} /><Route path="/admin" element={<AdminPage />} /><Route path="/vacancies" element={<VacanciesPage />} /><Route path="/vacancies/:source/:vacancyId" element={<VacancyPage />} />{steps.filter(s => s.path !== '/profile' && s.path !== '/chat' && s.path !== '/vacancies' && s.path !== '/resume').map(s => <Route path={s.path} key={s.path} element={<Placeholder title={s.title} />} />)}<Route path="*" element={<Placeholder title="Страница не найдена" />} /></Routes></main>
     <footer className="page-footer">Career Agent <span>Ваша карьера начинается с вас.</span></footer></div></div>;
 }
