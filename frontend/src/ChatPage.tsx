@@ -1,16 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { extractionMessages, parseFacts, profileApi, type Item } from './facts';
+import { extractionMessages, parseFacts, profileApi } from './facts';
 import { complete, groqBase, groqModel, interviewPrompt, listModels, type Connection, type Message } from './llm';
 
 type Turn = { id: string; prompt: string; reply: string | null; created_at: string; facts_checked?: boolean };
-type Extracted = { items: Item[]; skipped: { index: number; reason: string }[]; already_processed: boolean; profile_fields?: string[] };
-function factSummary(result: Extracted) {
-  const found = result.items.length + (result.profile_fields?.length ?? 0);
-  const ungrounded = result.skipped.filter(row => row.reason === 'evidence').length;
-  const main = found ? `Добавлено в профиль: ${found}. Изменить или удалить записи можно в профиле.` : 'Новых фактов для профиля в этом сообщении нет.';
-  return ungrounded ? `${main} Не подтверждено цитатой из сообщения и пропущено: ${ungrounded}.` : main;
-}
 class SignInRequired extends Error {}
 async function api<T>(path = '', body?: object, method = 'POST', signal?: AbortSignal): Promise<T> {
   let result: Response;
@@ -38,8 +31,16 @@ export function ChatPage() {
   const [historyAttempt, setHistoryAttempt] = useState(0);
   const [unsaved, setUnsaved] = useState<{ id: string; reply: string } | null>(null);
   const [pendingSend, setPendingSend] = useState<{ id: string; prompt: string } | null>(null);
-  const [factNotes, setFactNotes] = useState<Record<string, string>>({});
+  const [drainRequest, setDrainRequest] = useState<{ count: number; first?: string }>({ count: 0 });
   const abort = useRef<AbortController | null>(null);
+  // Background fact extraction reads the latest state through refs and never touches the UI.
+  const configRef = useRef(config);
+  const turnsRef = useRef(turns);
+  useEffect(() => { configRef.current = config; }, [config]);
+  useEffect(() => { turnsRef.current = turns; }, [turns]);
+  const draining = useRef(false);
+  const drainAgain = useRef<string | undefined | null>(null);
+  const background = useRef<AbortController | null>(null);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -48,7 +49,7 @@ export function ChatPage() {
       .catch(err => { if (active) { setReady(false); setHistoryError(err.message); setNeedsLogin(err instanceof SignInRequired); } }).finally(() => { clearTimeout(timer); if (active) setLoading(false); });
     return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, [historyAttempt]);
-  useEffect(() => () => abort.current?.abort(), []);
+  useEffect(() => () => { abort.current?.abort(); background.current?.abort(); }, []);
   function retryHistory() { setLoading(true); setHistoryAttempt(value => value + 1); }
   function update(change: Partial<Connection>) { setConfig(c => ({ ...c, ...change })); setModels([]); setNotice(''); }
   function chooseProvider(value: 'groq' | 'custom') {
@@ -58,31 +59,51 @@ export function ChatPage() {
   }
   async function check() {
     setBusy(true); setError(''); setNotice('');
-    try { const names = await listModels(config); setModels(names); setConfig(c => ({ ...c, model: c.model || names[0] || '' })); setNotice(names.length ? 'Список моделей получен. Выберите модель; генерация проверяется при отправке сообщения.' : 'API ответил без списка моделей. Введите название модели вручную.'); }
+    try { const names = await listModels(config); setModels(names); setConfig(c => ({ ...c, model: c.model || names[0] || '' })); setDrainRequest(r => ({ count: r.count + 1 })); setNotice(names.length ? 'Список моделей получен. Выберите модель; генерация проверяется при отправке сообщения.' : 'API ответил без списка моделей. Введите название модели вручную.'); }
     catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подключения'); }
     finally { setBusy(false); }
   }
-  async function extractOnce(turn: Turn, history: Turn[], signal: AbortSignal) {
+  async function extractOnce(turn: Turn, signal: AbortSignal) {
+    const history = turnsRef.current;
     const index = history.findIndex(row => row.id === turn.id);
     const question = index > 0 ? history[index - 1].reply : null;
-    const facts = parseFacts(await complete(config, extractionMessages(question, turn.prompt), signal, 2000), turn.prompt);
-    const result = await profileApi<Extracted>('/items/extracted', 'POST', { turn_id: turn.id, facts });
+    const facts = parseFacts(await complete(configRef.current, extractionMessages(question, turn.prompt), signal, 2000), turn.prompt);
+    await profileApi('/items/extracted', 'POST', { turn_id: turn.id, facts });
+    turnsRef.current = turnsRef.current.map(row => row.id === turn.id ? { ...row, facts_checked: true } : row);
     setTurns(rows => rows.map(row => row.id === turn.id ? { ...row, facts_checked: true } : row));
-    setFactNotes(notes => ({ ...notes, [turn.id]: factSummary(result) }));
   }
-  async function findFacts(turn: Turn, history: Turn[], signal: AbortSignal) {
-    // Facts go to the profile without a button. A failure never loses the saved conversation:
-    // one immediate retry here, and the message is picked up again after the next reply.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try { await extractOnce(turn, history, signal); return; }
-      catch (err) {
-        if (signal.aborted || attempt === 1) {
-          setFactNotes(notes => ({ ...notes, [turn.id]: 'Факты пока не извлечены, повторим после следующего ответа. Причина: ' + (err instanceof Error ? err.message : 'ошибка модели') }));
+  /**
+   * Silently moves every saved answer into the profile: the newest reply first, then the backlog
+   * from oldest to newest. Failures are retried once and otherwise left for the next run; the
+   * conversation and the page are never blocked or annotated.
+   */
+  async function drain(first?: string) {
+    if (draining.current) { drainAgain.current = first; return; }
+    draining.current = true;
+    const failed = new Set<string>();
+    try {
+      for (;;) {
+        const { model, base } = configRef.current;
+        if (!model.trim() || !base.trim()) return;
+        const open = turnsRef.current.filter(row => row.reply && row.facts_checked === false && !failed.has(row.id));
+        const turn = open.find(row => row.id === first) ?? open[0];
+        if (!turn) return;
+        let done = false;
+        for (let attempt = 0; attempt < 2 && !done; attempt++) {
+          const controller = new AbortController(); background.current = controller;
+          const timer = setTimeout(() => controller.abort(), 120000);
+          try { await extractOnce(turn, controller.signal); done = true; }
+          catch { /* Retried once now and again on the next run; the user is not interrupted. */ }
+          finally { clearTimeout(timer); background.current = null; }
         }
-        if (signal.aborted) return;
+        if (!done) failed.add(turn.id);
       }
+    } finally {
+      draining.current = false;
+      if (drainAgain.current !== null) { const next = drainAgain.current; drainAgain.current = null; setDrainRequest(r => ({ count: r.count + 1, first: next })); }
     }
   }
+  useEffect(() => { if (drainRequest.count) void drain(drainRequest.first); }, [drainRequest]); // eslint-disable-line react-hooks/exhaustive-deps
   async function run(event?: React.FormEvent) {
     event?.preventDefault(); if (busy || !ready) return;
     setBusy(true); setError(''); setNotice('');
@@ -112,11 +133,7 @@ export function ChatPage() {
       const answer = { id: pending.id, reply }; setUnsaved(answer);
       const saved = await api<Turn>('/' + pending.id, { reply }, 'PATCH');
       setTurns(rows => rows.map(row => row.id === saved.id ? saved : row)); setUnsaved(null);
-      const updated = history.map(row => row.id === saved.id ? saved : row);
-      if (!saved.facts_checked) await findFacts(saved, updated, controller.signal);
-      // Catch up on earlier answers whose extraction failed or predates this feature.
-      const missed = updated.filter(row => row.id !== saved.id && row.reply && row.facts_checked === false).slice(-5);
-      for (const row of missed) { if (controller.signal.aborted) break; await findFacts(row, updated, controller.signal); }
+      setDrainRequest(r => ({ count: r.count + 1, first: saved.id }));
     } catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подключения'); }
     finally { clearTimeout(timer); abort.current = null; setBusy(false); }
   }
@@ -147,8 +164,7 @@ export function ChatPage() {
       <p>Выбранной модели передаются последние 20 пар сообщений интервью. История хранится в вашем аккаунте Career Agent.</p>
     </fieldset>
     <div className="chat-history" aria-label="История интервью">{turns.length === 0 && ready && <p>Начните с рассказа о себе или напишите «Помоги определить мои интересы».</p>}{turns.map(row => <div key={row.id}><article><strong>Вы</strong><p>{row.prompt}</p></article><article><strong>Агент</strong><p>{row.reply ?? (unsaved?.id === row.id ? unsaved.reply : 'Ответ ещё не получен. Можно повторить запрос.')}</p></article>
-      {factNotes[row.id] && <div className="chat-facts" role="status"><p>{factNotes[row.id]}</p>
-        {row.facts_checked && <Link to="/profile">Открыть профиль</Link>}</div>}</div>)}</div>
+</div>)}</div>
     {busy && <p role="status">Ожидаем ответ и сохраняем сообщения…</p>}
     <form onSubmit={event => void run(event)}>
       {sendHint && <p id="chat-send-help" role="status">{sendHint}</p>}
