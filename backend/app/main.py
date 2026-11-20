@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
+from app import vacancies
 from app.admin import router as admin_router
 from app.auth import AuthLimiter, router
 from app.chat import router as chat_router
@@ -39,6 +40,8 @@ def create_app(
             engine.dispose()
 
     api = FastAPI(title="Career Agent API", version="0.1.0", lifespan=lifespan)
+    api.state.vacancy_limiter = AuthLimiter()
+    api.include_router(vacancies.router)
     api.state.engine = engine
     api.state.settings = config
     api.state.auth_limiter = AuthLimiter()
