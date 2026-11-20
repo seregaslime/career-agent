@@ -42,6 +42,7 @@ def create_app(
 
     api = FastAPI(title="Career Agent API", version="0.1.0", lifespan=lifespan)
     api.state.vacancy_limiter = AuthLimiter()
+    api.state.vacancy_cache = vacancies.SourceCache()
     api.include_router(vacancies.router)
     api.state.engine = engine
     api.state.settings = config
