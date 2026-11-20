@@ -17,3 +17,5 @@ class Settings(BaseSettings):
     )
 
     cookie_secure: bool = True
+    hh_access_token: SecretStr = SecretStr("")
+    hh_user_agent: str = ""
