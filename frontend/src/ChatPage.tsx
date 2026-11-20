@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { complete, interviewPrompt, listModels, type Connection, type Message } from './llm';
+import { complete, groqBase, groqModel, interviewPrompt, listModels, type Connection, type Message } from './llm';
 
 type Turn = { id: string; prompt: string; reply: string | null; created_at: string };
 async function api<T>(path = '', body?: object, method = 'POST'): Promise<T> {
@@ -11,6 +11,7 @@ async function api<T>(path = '', body?: object, method = 'POST'): Promise<T> {
 }
 export function ChatPage() {
   const [config, setConfig] = useState<Connection>({ kind: 'ollama', base: 'http://127.0.0.1:11434', model: '', key: '' });
+  const [provider, setProvider] = useState<'groq' | 'custom'>('groq');
   const [models, setModels] = useState<string[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState('');
@@ -30,9 +31,14 @@ export function ChatPage() {
     return () => { active = false; abort.current?.abort(); };
   }, []);
   function update(change: Partial<Connection>) { setConfig(c => ({ ...c, ...change })); setModels([]); setNotice(''); setConsent(false); }
+  function chooseProvider(value: 'groq' | 'custom') {
+    setProvider(value);
+    update({ base: value === 'groq' ? groqBase : '', model: value === 'groq' ? groqModel : '', key: '' });
+    setError('');
+  }
   async function check() {
     setBusy(true); setError(''); setNotice('');
-    try { const names = await listModels(config); setModels(names); setConfig(c => ({ ...c, model: names.includes(c.model) ? c.model : names[0] ?? '' })); setNotice(names.length ? 'Соединение установлено. Выберите модель.' : 'Соединение установлено, но модели не найдены. Загрузите модель на сервере.'); }
+    try { const names = await listModels(config); setModels(names); setConfig(c => ({ ...c, model: c.model || names[0] || '' })); setNotice(names.length ? 'Список моделей получен. Выберите модель; генерация проверяется при отправке сообщения.' : 'API ответил без списка моделей. Введите название модели вручную.'); }
     catch (err) { setError(err instanceof Error ? err.message : 'Ошибка подключения'); }
     finally { setBusy(false); }
   }
@@ -75,19 +81,21 @@ export function ChatPage() {
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {!ready && !loading && <><Link to="/profile">Войти в аккаунт</Link><p>После входа или восстановления соединения обновите эту страницу.</p></>}
     <fieldset disabled={busy || !!unsaved}><legend>Подключение модели</legend>
-      <label>Режим<select value={config.kind} onChange={e => { const kind = e.target.value as Connection['kind']; update({ kind, base: kind === 'ollama' ? 'http://127.0.0.1:11434' : 'https://api.example.com/v1', model: '', key: '' }); setConsent(false); }}><option value="ollama">Ollama на моём компьютере</option><option value="api">Совместимый API (прямой запрос)</option></select></label>
-      <label>Адрес сервера<input value={config.base} maxLength={500} onChange={e => update({ base: e.target.value })} /></label>
-      {config.kind === 'api' && <label>API-ключ<input type="password" autoComplete="off" value={config.key} maxLength={1000} onChange={e => update({ key: e.target.value })} /></label>}
-      <button className="button secondary" onClick={() => void check()}>Проверить подключение</button>
-      <label>Модель<input list="llm-models" value={config.model} maxLength={200} onChange={e => setConfig(c => ({ ...c, model: e.target.value }))} /></label><datalist id="llm-models">{models.map(name => <option key={name} value={name} />)}</datalist>
-      <p>{config.kind === 'ollama' ? 'Запустите Ollama с опубликованным портом и разрешите CORS для адреса нашего сайта. Модель вызывается вашим браузером.' : 'Укажите адрес совместимого API с окончанием /v1. Провайдер должен разрешать запросы браузера (CORS). Ключ хранится только в памяти вкладки.'}</p>
+      <label>Режим<select value={config.kind} onChange={e => { const kind = e.target.value as Connection['kind']; setProvider('groq'); update({ kind, base: kind === 'ollama' ? 'http://127.0.0.1:11434' : groqBase, model: kind === 'ollama' ? '' : groqModel, key: '' }); setError(''); }}><option value="ollama">Ollama на моём компьютере</option><option value="api">Совместимый API (прямой запрос)</option></select></label>
+      {config.kind === 'api' && <label>Провайдер<select value={provider} onChange={e => chooseProvider(e.target.value as 'groq' | 'custom')}><option value="groq">Groq</option><option value="custom">Другой совместимый API</option></select></label>}
+      <label>Адрес сервера<input value={config.base} readOnly={config.kind === 'api' && provider === 'groq'} placeholder="https://provider.example/v1" maxLength={500} onChange={e => update({ base: e.target.value, key: '' })} /></label>
+      {config.kind === 'api' && <><label>API-ключ<input type="password" autoComplete="off" spellCheck={false} value={config.key} maxLength={1000} onChange={e => update({ key: e.target.value })} /></label><button className="button secondary" disabled={!config.key} onClick={() => update({ key: '' })}>Очистить ключ</button></>}
+      <button className="button secondary" disabled={!config.base.trim() || (config.kind === 'api' && provider === 'groq' && !config.key.trim())} onClick={() => void check()}>Проверить подключение</button>
+      <label>Модель<input list="llm-models" value={config.model} maxLength={200} onChange={e => { setConfig(c => ({ ...c, model: e.target.value })); setConsent(false); }} /></label><datalist id="llm-models">{models.map(name => <option key={name} value={name} />)}</datalist>
+      <p>{config.kind === 'ollama' ? 'Запустите Ollama с опубликованным портом и разрешите CORS для адреса нашего сайта. Модель вызывается вашим браузером.' : 'Используйте свой ключ провайдера. Запросы идут напрямую из браузера; ключ не передаётся нашему backend и не сохраняется в браузерном хранилище. При уходе со страницы ключ очищается.'}</p>
+      {config.kind === 'api' && <><p>Поддерживается OpenAI-совместимый Chat Completions API. Укажите базовый URL, обычно с /v1, без /chat/completions. Если список моделей недоступен, введите модель вручную. Провайдер должен разрешать запросы браузера (CORS).</p>{provider === 'groq' && <p><a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Создать личный ключ Groq</a>. Лимиты относятся к вашему аккаунту Groq. Входной контекст и ответ вместе расходуют квоту токенов; история пока ограничена 20 последними парами сообщений, а не точным числом токенов.</p>}</>}
       <label><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} /> Разрешаю отправлять последние 20 пар сообщений интервью на выбранный сервер модели. История хранится в моём аккаунте Career Agent.</label>
     </fieldset>
     <div className="chat-history" aria-label="История интервью">{turns.length === 0 && ready && <p>Начните с рассказа о себе или напишите «Помоги определить мои интересы».</p>}{turns.map(row => <div key={row.id}><article><strong>Вы</strong><p>{row.prompt}</p></article><article><strong>Агент</strong><p>{row.reply ?? (unsaved?.id === row.id ? unsaved.reply : 'Ответ ещё не получен. Можно повторить запрос.')}</p></article></div>)}</div>
     {busy && <p role="status">Ожидаем ответ и сохраняем сообщения…</p>}
     <form onSubmit={event => void run(event)}>
       {!pending && !unsaved && <label>Ваше сообщение<textarea required maxLength={4000} value={text} disabled={busy || !ready || !!pendingSend} onChange={e => setText(e.target.value)} /></label>}
-      <button className="button" disabled={busy || !ready || !consent || (!unsaved && !config.model.trim())}>{unsaved ? 'Сохранить полученный ответ' : pending ? 'Повторить получение ответа' : 'Отправить'}</button>
+      <button className="button" disabled={busy || !ready || !consent || (!unsaved && (!config.model.trim() || !config.base.trim() || (config.kind === 'api' && provider === 'groq' && !config.key.trim())))}>{unsaved ? 'Сохранить полученный ответ' : pending ? 'Повторить получение ответа' : 'Отправить'}</button>
       {busy && <button className="button secondary" type="button" onClick={() => abort.current?.abort()}>Остановить ожидание модели</button>}
     </form>
   </section>;
