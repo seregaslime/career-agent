@@ -13,6 +13,7 @@ from app.auth import AuthLimiter, router
 from app.chat import router as chat_router
 from app.config import Settings
 from app.db import check_database, make_engine
+from app.profile_items import router as profile_items_router
 
 
 class Health(BaseModel):
@@ -45,6 +46,7 @@ def create_app(
     api.include_router(router)
     api.include_router(admin_router)
     api.include_router(chat_router)
+    api.include_router(profile_items_router)
 
     @api.middleware("http")
     async def protect_origin(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -59,7 +61,7 @@ def create_app(
     api.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_credentials=True,
         allow_headers=["Content-Type"],
     )

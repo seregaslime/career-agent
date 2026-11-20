@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { RecoveryCodes } from './RecoveryPage';
 import { Link } from 'react-router-dom';
+import { ProfileFacts } from './ProfileFacts';
 
-interface Profile { full_name: string; target_role: string; education: string; about: string }
+interface Profile { full_name: string; target_role: string; education: string; about: string; work_format?: string; location?: string }
+const formats: [string, string][] = [['', 'Не выбран'], ['office', 'Офис'], ['remote', 'Удалённо'], ['hybrid', 'Гибрид'], ['any', 'Любой']];
 const empty: Profile = { full_name: '', target_role: '', education: '', about: '' };
 async function api(path: string, method = 'GET', body?: object) {
   let response: Response;
@@ -112,10 +114,12 @@ export function ProfilePage() {
     {user ? <><p>{user}</p>{isAdmin && <Link className="button secondary" to="/admin">Панель администратора</Link>}<form onSubmit={save}>
       <label>Имя<input value={profile.full_name} maxLength={120} onChange={e => setProfile({ ...profile, full_name: e.target.value })} /></label>
       <label>Желаемая должность<input value={profile.target_role} maxLength={120} onChange={e => setProfile({ ...profile, target_role: e.target.value })} /></label>
-      <label>Образование<textarea value={profile.education} maxLength={3000} onChange={e => setProfile({ ...profile, education: e.target.value })} /></label>
-      <label>О себе и проектах<textarea value={profile.about} maxLength={5000} onChange={e => setProfile({ ...profile, about: e.target.value })} /></label>
+      <label>Формат работы<select value={profile.work_format ?? ''} onChange={e => setProfile({ ...profile, work_format: e.target.value })}>{formats.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label>Город или регион<input value={profile.location ?? ''} maxLength={120} onChange={e => setProfile({ ...profile, location: e.target.value })} /></label>
+      <label>Кратко об образовании<textarea value={profile.education} maxLength={3000} onChange={e => setProfile({ ...profile, education: e.target.value })} /></label>
+      <label>Кратко о себе<textarea value={profile.about} maxLength={5000} onChange={e => setProfile({ ...profile, about: e.target.value })} /></label>
       <button className="button" disabled={busy}>Сохранить профиль</button>
-    </form><form onSubmit={generateCodes}><h2>Резервные коды</h2><p>Создайте 8 одноразовых кодов для восстановления доступа. Новый набор заменит все прежние коды.</p>
+    </form><ProfileFacts /><form onSubmit={generateCodes}><h2>Резервные коды</h2><p>Создайте 8 одноразовых кодов для восстановления доступа. Новый набор заменит все прежние коды.</p>
       <label>Текущий пароль<input type="password" autoComplete="current-password" required minLength={8} maxLength={128} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label>
       <button className="button secondary" disabled={busy}>Создать новый набор кодов</button></form><button className="button secondary" disabled={busy} onClick={() => void logout()}>Выйти</button></> : <>
       <form onSubmit={authenticate}>

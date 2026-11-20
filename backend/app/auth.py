@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from time import monotonic
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -80,6 +80,8 @@ class ProfileData(BaseModel):
     target_role: str = Field(default="", max_length=120)
     education: str = Field(default="", max_length=3000)
     about: str = Field(default="", max_length=5000)
+    work_format: Literal["", "office", "remote", "hybrid", "any"] = ""
+    location: str = Field(default="", max_length=120)
 
 
 class AuthLimiter:
