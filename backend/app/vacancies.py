@@ -1,9 +1,12 @@
-"""Independent vacancy catalog: synthetic demo and an explicitly configured HH adapter."""
+"""Independent vacancy catalog: synthetic demo and the public Russian employment open-data API."""
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from threading import Lock
+from time import monotonic
 from typing import Annotated, Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -13,7 +16,7 @@ from urllib.request import Request as URLRequest
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-Source = Literal["demo", "hh"]
+Source = Literal["demo", "trudvsem"]
 Experience = Literal["", "noExperience", "between1And3", "between3And6", "moreThan6"]
 Format = Literal["", "REMOTE", "HYBRID", "ON_SITE"]
 router = APIRouter(prefix="/api/vacancies", tags=["vacancies"])
@@ -50,7 +53,7 @@ class Catalog(BaseModel):
     page: int
     pages: int
     fetched_at: datetime
-    hh_available: bool
+    filtered_on_page: bool = False
 
 
 class PlainText(HTMLParser):
@@ -72,42 +75,79 @@ def obj(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def source_id(value: str) -> tuple[str, str]:
+    match = re.fullmatch(r"([A-Za-z0-9-]{1,64})~([A-Za-z0-9-]{1,64})", value)
+    if not match:
+        raise ValueError("Invalid vacancy identity")
+    return match[1], match[2]
+
+
 def normalize(row: dict[str, Any]) -> Vacancy:
-    identity = str(row.get("id", ""))
-    if not re.fullmatch(r"\d{1,20}", identity):
-        raise ValueError("Invalid vacancy id")
-    salary = obj(row.get("salary_range")) or obj(row.get("salary"))
-    snippet = obj(row.get("snippet"))
-    experience = obj(row.get("experience"))
-    formats = row.get("work_format") or []
-    skills = row.get("key_skills") or []
-    if not isinstance(formats, list) or not isinstance(skills, list):
-        raise ValueError("Invalid vacancy fields")
+    company = obj(row.get("company"))
+    if company.get("companycode") is None or row.get("id") is None:
+        raise ValueError("Missing vacancy identity")
+    identity = str(company.get("companycode", "")) + "~" + str(row.get("id", ""))
+    company_id, vacancy_id = source_id(identity)
+    requirement = obj(row.get("requirement"))
+    years = requirement.get("experience")
+    experience, label = "", "Не указан"
+    if isinstance(years, (int, float)) and not isinstance(years, bool) and 0 <= years <= 100:
+        experience = (
+            "noExperience"
+            if years == 0
+            else "between1And3"
+            if years < 3
+            else "between3And6"
+            if years <= 6
+            else "moreThan6"
+        )
+        label = "Без опыта" if years == 0 else f"От {years:g} лет"
+    employment = plain(row.get("employment"))
+    schedule = plain(row.get("schedule"))
+    work = (employment + " " + schedule).casefold().replace("ё", "е")
+    formats = ["REMOTE"] if "дистанцион" in work or "удален" in work else []
+    if "гибрид" in work:
+        formats = ["HYBRID"]
+    skills = row.get("skills") or []
+    if not isinstance(skills, list):
+        raise ValueError("Invalid skills")
+    low, high = row.get("salary_min"), row.get("salary_max")
+    low = low if isinstance(low, (int, float)) and low > 0 else None
+    high = high if isinstance(high, (int, float)) and high > 0 else None
+    currency = plain(row.get("currency"))
+    currency = "RUR" if "руб" in currency.casefold() or currency in ("RUB", "RUR") else currency
+    description = "\n".join(
+        filter(
+            None,
+            [
+                plain(row.get("duty")),
+                plain(row.get("requirements")),
+                "Образование: " + plain(requirement["education"])
+                if requirement.get("education")
+                else "",
+                "Занятость: " + employment if employment else "",
+                "График: " + schedule if schedule else "",
+            ],
+        )
+    )
+    published = row.get("creation-date")
+    stamp = datetime.fromisoformat(published) if published else None
+    if stamp is not None and stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
     return Vacancy(
         id=identity,
-        source="hh",
-        title=plain(row.get("name")) or "Без названия",
-        company=plain(obj(row.get("employer")).get("name")) or "Не указана",
-        city=plain(obj(row.get("area")).get("name")) or "Не указан",
-        experience=plain(experience.get("id")),
-        experience_label=plain(experience.get("name")) or "Не указан",
-        work_formats=[plain(obj(item).get("id")) for item in formats],
-        salary=Salary(
-            minimum=salary.get("from"),
-            maximum=salary.get("to"),
-            currency=plain(salary.get("currency")),
-            gross=salary.get("gross"),
-            frequency=plain(obj(salary.get("frequency")).get("name")) or None,
-        )
-        if salary
-        else None,
-        skills=[plain(obj(item).get("name")) for item in skills if obj(item).get("name")],
-        description=plain(
-            row.get("description")
-            or " ".join(str(snippet.get(key) or "") for key in ("requirement", "responsibility"))
-        ),
-        published_at=row.get("published_at"),
-        source_url=f"https://hh.ru/vacancy/{identity}",
+        source="trudvsem",
+        title=plain(row.get("job-name")) or "Без названия",
+        company=plain(company.get("name")) or "Не указана",
+        city=plain(obj(row.get("region")).get("name")) or "Не указан",
+        experience=experience,
+        experience_label=label,
+        work_formats=formats,
+        salary=Salary(minimum=low, maximum=high, currency=currency) if low or high else None,
+        skills=list(dict.fromkeys(plain(item) for item in skills if isinstance(item, str))),
+        description=description,
+        published_at=stamp,
+        source_url=f"https://trudvsem.ru/vacancy/card/{company_id}/{vacancy_id}",
     )
 
 
@@ -215,115 +255,151 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def hh_ready(request: Request) -> bool:
-    config = request.app.state.settings
-    return bool(config.hh_access_token.get_secret_value() and config.hh_user_agent.strip())
-
-
-def read_hh(request: Request, path: str, params: dict[str, str | int]) -> dict[str, Any]:
-    if not hh_ready(request):
-        raise HTTPException(503, "Источник hh.ru ещё не подключён. Пока доступен демокаталог.")
+def read_source(request: Request, path: str, params: dict[str, str | int]) -> dict[str, Any]:
     request.app.state.vacancy_limiter.check(
         "vacancies:" + (request.client.host if request.client else "unknown")
     )
-    config = request.app.state.settings
-    url = "https://api.hh.ru/vacancies" + path + ("?" + urlencode(params) if params else "")
+    url = "https://opendata.trudvsem.ru/api/v1/vacancies" + path
+    if params:
+        url += "?" + urlencode(params)
     query = URLRequest(
         url,
         headers={
-            "User-Agent": config.hh_user_agent,
-            "Authorization": "Bearer " + config.hh_access_token.get_secret_value(),
+            "User-Agent": "CareerAgentStudent/0.1 (https://github.com/seregaslime/career-agent)",
             "Accept": "application/json",
         },
     )
     try:
-        with build_opener(NoRedirect()).open(query, timeout=8) as response:
+        with build_opener(NoRedirect()).open(query, timeout=15) as response:
             body = response.read(2_000_001)
         if len(body) > 2_000_000:
             raise ValueError("Response too large")
         data = json.loads(body)
-        if not isinstance(data, dict):
-            raise ValueError("Invalid response")
+        if not isinstance(data, dict) or str(data.get("status")) != "200":
+            raise ValueError("Invalid source response")
         return data
     except HTTPError as error:
         if error.code == 404:
             raise HTTPException(404, "Вакансия больше не доступна в источнике") from None
-        if error.code == 429:
-            raise HTTPException(
-                503, "Лимит hh.ru исчерпан. Повторите позже или откройте демокаталог."
-            ) from None
         raise HTTPException(
-            503, "hh.ru отклонил запрос. Доступ источника требует проверки."
+            503, "Источник «Работа России» временно недоступен. Повторите позже."
         ) from None
     except (URLError, TimeoutError, OSError, ValueError):
-        raise HTTPException(503, "Не удалось получить вакансии hh.ru. Повторите позже.") from None
+        raise HTTPException(
+            503, "Не удалось получить данные «Работы России». Повторите позже."
+        ) from None
+
+
+def normalized_items(data: dict[str, Any]) -> list[Vacancy]:
+    items = data["results"]["vacancies"]
+    if not isinstance(items, list):
+        raise ValueError("Invalid items")
+    unique = {row.id: row for row in (normalize(item["vacancy"]) for item in items)}
+    return list(unique.values())
+
+
+@dataclass
+class SourcePage:
+    items: list[Vacancy]
+    found: int
+    fetched_at: datetime
+    expires: float
+
+
+class SourceCache:
+    """Per-process bounded cache of normalized public vacancies, without contact fields."""
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.entries: dict[str, SourcePage] = {}
+
+    def get(self, key: str) -> SourcePage | None:
+        with self.lock:
+            row = self.entries.get(key)
+            return row if row and row.expires > monotonic() else None
+
+    def put(self, key: str, value: SourcePage) -> None:
+        with self.lock:
+            self.entries = {k: v for k, v in self.entries.items() if v.expires > monotonic()}
+            if len(self.entries) >= 16:
+                self.entries.pop(next(iter(self.entries)))
+            self.entries[key] = value
+
+
+def source_page(request: Request, path: str, params: dict[str, str | int]) -> SourcePage:
+    cache: SourceCache = request.app.state.vacancy_cache
+    key = path + "?" + urlencode(sorted(params.items()))
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    data = read_source(request, path, params)
+    try:
+        rows = normalized_items(data)
+        found = max(0, int(obj(data.get("meta")).get("total", len(rows))))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise HTTPException(502, "Источник вернул неожиданный формат вакансий") from None
+    result = SourcePage(rows, found, datetime.now(UTC), monotonic() + 300)
+    cache.put(key, result)
+    return result
 
 
 @router.get("", response_model=Catalog)
 def catalog(
     request: Request,
-    source: Source = "demo",
+    source: Source = "trudvsem",
     q: Annotated[str, Query(max_length=120)] = "",
     experience: Experience = "",
     work_format: Format = "",
     page: Annotated[int, Query(ge=0, le=99)] = 0,
 ) -> Catalog:
+    fetched_at = datetime.now(UTC)
     if source == "demo":
         rows = [
             row
             for row in demo()
-            if (
-                q.strip().casefold()
-                in " ".join([row.title, row.company, row.city, *row.skills]).casefold()
-                and (not experience or row.experience == experience)
-                and (not work_format or work_format in row.work_formats)
-            )
+            if q.strip().casefold()
+            in " ".join([row.title, row.company, row.city, *row.skills]).casefold()
         ]
-        found, pages = len(rows), (len(rows) + 19) // 20
-        rows = rows[page * 20 : (page + 1) * 20]
     else:
-        params: dict[str, str | int] = {"page": page, "per_page": 20}
-        for key, value in {
-            "text": q.strip(),
-            "experience": experience,
-            "work_format": work_format,
-        }.items():
-            if value:
-                params[key] = value
-        data = read_hh(request, "", params)
-        try:
-            items = data["items"]
-            if not isinstance(items, list):
-                raise ValueError("Invalid items")
-            unique = {str(item["id"]): normalize(item) for item in items}
-            rows = list(unique.values())
-            found, pages = max(0, int(data["found"])), min(100, max(0, int(data["pages"])))
-        except (ValueError, KeyError, TypeError):
-            raise HTTPException(502, "hh.ru вернул неожиданный формат вакансий") from None
+        params: dict[str, str | int] = {"offset": page, "limit": 20}
+        if q.strip():
+            params["text"] = q.strip()
+        result = source_page(request, "", params)
+        rows, found, fetched_at = result.items, result.found, result.fetched_at
+    rows = [
+        row
+        for row in rows
+        if (not experience or row.experience == experience)
+        and (not work_format or work_format in row.work_formats)
+    ]
+    if source == "demo":
+        found = len(rows)
+        rows = rows[page * 20 : (page + 1) * 20]
+    pages = min(100, (found + 19) // 20)
     return Catalog(
         source=source,
         items=rows,
         found=found,
         page=page,
         pages=pages,
-        fetched_at=datetime.now(UTC),
-        hh_available=hh_ready(request),
+        fetched_at=fetched_at,
+        filtered_on_page=source == "trudvsem" and bool(experience or work_format),
     )
 
 
 @router.get("/{source}/{vacancy_id}", response_model=Vacancy)
 def detail(request: Request, source: Source, vacancy_id: str) -> Vacancy:
-    if not re.fullmatch(r"\d{1,20}", vacancy_id):
-        raise HTTPException(404, "Вакансия не найдена")
     if source == "demo":
         for row in demo():
             if row.id == vacancy_id:
                 return row
         raise HTTPException(404, "Вакансия не найдена")
-    data = read_hh(request, "/" + vacancy_id, {})
-    if data.get("archived"):
-        raise HTTPException(404, "Вакансия находится в архиве")
     try:
-        return normalize(data)
-    except (ValueError, KeyError, TypeError):
-        raise HTTPException(502, "hh.ru вернул неожиданный формат вакансии") from None
+        company_id, identity = source_id(vacancy_id)
+    except ValueError:
+        raise HTTPException(404, "Вакансия не найдена") from None
+    result = source_page(request, f"/vacancy/{company_id}/{identity}", {})
+    for row in result.items:
+        if row.id == vacancy_id:
+            return row
+    raise HTTPException(404, "Вакансия не найдена")
