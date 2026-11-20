@@ -16,3 +16,11 @@ it('renders the overview and navigation', () => {
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('У вашего опыта');
   expect(screen.getByRole('navigation')).toBeInTheDocument();
 });
+
+it('opens the resume page instead of the development placeholder', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', {status:401})));
+  render(<MemoryRouter initialEntries={['/resume']}><App /></MemoryRouter>);
+  expect(screen.getByRole('heading', {name:'Ваше резюме'})).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Войдите в аккаунт');
+  expect(screen.queryByText('Этот раздел ещё в разработке.', {exact:false})).not.toBeInTheDocument();
+});

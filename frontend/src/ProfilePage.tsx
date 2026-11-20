@@ -119,7 +119,7 @@ export function ProfilePage() {
       <label>Кратко об образовании<textarea value={profile.education} maxLength={3000} onChange={e => setProfile({ ...profile, education: e.target.value })} /></label>
       <label>Кратко о себе<textarea value={profile.about} maxLength={5000} onChange={e => setProfile({ ...profile, about: e.target.value })} /></label>
       <button className="button" disabled={busy}>Сохранить профиль</button>
-    </form><ProfileFacts /><form onSubmit={generateCodes}><h2>Резервные коды</h2><p>Создайте 8 одноразовых кодов для восстановления доступа. Новый набор заменит все прежние коды.</p>
+    </form><ProfileFacts /><Link className="button secondary" to="/resume">Собрать резюме из профиля →</Link><form onSubmit={generateCodes}><h2>Резервные коды</h2><p>Создайте 8 одноразовых кодов для восстановления доступа. Новый набор заменит все прежние коды.</p>
       <label>Текущий пароль<input type="password" autoComplete="current-password" required minLength={8} maxLength={128} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label>
       <button className="button secondary" disabled={busy}>Создать новый набор кодов</button></form><button className="button secondary" disabled={busy} onClick={() => void logout()}>Выйти</button></> : <>
       <form onSubmit={authenticate}>
