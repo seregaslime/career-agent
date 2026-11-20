@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { MatchExplanation, ProfileMatchingError, useMatchingProfile } from './ProfileMatching';
+import { rankVacancies } from './matching';
 import './vacancies.css';
 
 type Salary = {minimum:number|null;maximum:number|null;currency:string;gross:boolean|null;frequency:string|null};
 type Vacancy = {id:string;source:'demo'|'trudvsem';title:string;company:string;city:string;experience_label:string;work_formats:string[];salary:Salary|null;skills:string[];description:string;published_at:string|null;source_url:string|null};
 type Catalog = {source:'demo'|'trudvsem';items:Vacancy[];found:number;page:number;pages:number;fetched_at:string;filtered_on_page:boolean};
 const formats: Record<string,string> = {REMOTE:'Удалённо',HYBRID:'Гибрид',ON_SITE:'На месте'};
-function useVacancies<T>(path:string) {
-  const [result,setResult] = useState<{path:string;data?:T;error?:string}>({path:''});
+function useVacancies<T>(path:string|null) {
+  const [result,setResult] = useState<{path:string|null;data?:T;error?:string}>({path:''});
   const [attempt,setAttempt] = useState(0);
   useEffect(() => {
+    if (path === null) return;
     let active=true;
     const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(),30000);
@@ -39,36 +42,59 @@ function SourceLabel({source}:{source:string}) {return <span className="vacancy-
 function Basics({item}:{item:Vacancy}) {return <><p className="vacancy-company">{item.company} · {item.city}</p><p>{salaryText(item.salary)}</p><p>Опыт: {item.experience_label} · Формат: {item.work_formats.length?item.work_formats.map(value=>formats[value]??value).join(', '):'не указан'}</p></>;}
 export function VacanciesPage() {
   const [params]=useSearchParams();
-  return <VacancyCatalog key={params.toString()}/>;
+  return params.get('match')==='profile' ? <PersonalizedCatalog/> : <VacancyCatalog key={params.toString()}/>;
 }
-function VacancyCatalog() {
+function PersonalizedCatalog() {
+  const [params]=useSearchParams();
+  const matching=useMatchingProfile();
+  return <VacancyCatalog key={params.toString()} matching={matching}/>;
+}
+function VacancyCatalog({matching}:{matching?:ReturnType<typeof useMatchingProfile>}) {
   const [params,setParams]=useSearchParams();
   const source=params.get('source')==='demo'?'demo':'trudvsem';
   const page=Math.max(0,Math.min(99,Number(params.get('page'))||0));
-  const [draft,setDraft]=useState({source,q:params.get('q')??'',experience:params.get('experience')??'',work_format:params.get('work_format')??''});
-  const query=new URLSearchParams({source,q:params.get('q')??'',experience:params.get('experience')??'',work_format:params.get('work_format')??'',page:String(page)});
-  const {data,error,retry}=useVacancies<Catalog>('/api/vacancies?'+query);
+  const q=params.get('q')??matching?.data?.query??'';
+  const [draft,setDraft]=useState({source,q:params.get('q'),experience:params.get('experience')??'',work_format:params.get('work_format')??''});
+  const query=new URLSearchParams({source,q,experience:params.get('experience')??'',work_format:params.get('work_format')??'',page:String(page)});
+  if(matching) query.set('match','profile');
+  const normalQuery=new URLSearchParams(query); normalQuery.delete('match');
+  const path=matching&&(!matching.data||!q.trim()) ? null : '/api/vacancies?'+query;
+  const {data,error,retry}=useVacancies<Catalog>(path);
+  const rows=data ? matching?.data ? rankVacancies(matching.data,data.items).map(row=>row.vacancy) : data.items : [];
   function paginate(next:number) {const updated=new URLSearchParams(params);updated.set('page',String(next));setParams(updated);}
   return <section className="vacancies-page"><span className="eyebrow">ИССЛЕДУЕМ РЫНОК</span><h1>Вакансии</h1>
-    <p>Просматривайте роли и требования. Персональный подбор по подтверждённому профилю появится следующим этапом.</p>
+    <p>Ищите вакансии или сравните их с навыками и технологиями проектов из своего профиля.</p>
+    <div className="vacancy-personal-actions"><button className="button" onClick={()=>{matching?.retry();setParams({source:draft.source,match:'profile',page:'0'});}}>Подобрать по моему профилю</button>{matching&&<Link className="button secondary" to={'/vacancies?'+normalQuery}>Обычный поиск</Link>}</div>
+    {matching&&!matching.data&&<ProfileMatchingError {...matching}/>}
+    {matching?.data&&<aside className="vacancy-profile"><h2>Подбор по вашему профилю</h2><p>Желаемая роль: {matching.data.role||'не указана'}. Поиск: {q||'не задан'}.</p>
+      <p>Навыки и технологии проектов: {matching.data.skills.join(', ')||'пока не указаны'}.</p>{matching.data.omittedSkills>0&&<p>Учитываем первые 100 уникальных навыков; ещё {matching.data.omittedSkills} не вошли в сравнение.</p>}
+      {!matching.data.query&&<p>Добавьте желаемую должность или хотя бы один навык, чтобы начать подбор. <Link to="/profile">Заполнить профиль →</Link></p>}
+      {!matching.data.skills.length&&matching.data.query&&<p>Поиск по должности доступен. Для сравнения навыков <Link to="/profile">заполните профиль</Link>.</p>}
+      <p>Сортируем только загруженную страницу — до 20 вакансий. Сначала больше совпадений навыков, затем меньше остальных упомянутых навыков. При равенстве сохраняется порядок источника. Это не вероятность трудоустройства.</p>
+      <p>Словарь ограничен; обязательные и желательные требования не различаются. «Не указано в профиле» не означает, что вы этого не знаете. Условия проверяйте в оригинале. Формат и регион показываем для сравнения; фильтры вы выбираете сами.</p>
+    </aside>}
     {source==='demo'&&<p role="note" className="vacancy-notice">Демонстрационный набор: все компании, вакансии и зарплаты вымышлены. Это не реальные предложения работы.</p>}
-    <form className="vacancy-filters" onSubmit={event=>{event.preventDefault();setParams({...draft,page:'0'});}}>
+    <form className="vacancy-filters" onSubmit={event=>{event.preventDefault();setParams({...draft,q:draft.q??q,page:'0',...(matching?{match:'profile'}:{})});}}>
       <label>Источник<select value={draft.source} onChange={e=>setDraft({...draft,source:e.target.value as 'demo'|'trudvsem'})}><option value="demo">Демонстрационные вакансии</option><option value="trudvsem">Работа России · открытые данные</option></select></label>
-      <label>Поиск<input value={draft.q} maxLength={120} placeholder="Python, React, стажёр…" onChange={e=>setDraft({...draft,q:e.target.value})}/></label>
+      <label>Поиск<input value={draft.q??q} maxLength={120} placeholder="Python, React, стажёр…" onChange={e=>setDraft({...draft,q:e.target.value})}/></label>
       <label>Опыт<select value={draft.experience} onChange={e=>setDraft({...draft,experience:e.target.value})}><option value="">Любой</option><option value="noExperience">Без опыта</option><option value="between1And3">От 1 года до 3 лет</option><option value="between3And6">От 3 до 6 лет</option><option value="moreThan6">Более 6 лет</option></select></label>
       <label>Формат работы<select value={draft.work_format} onChange={e=>setDraft({...draft,work_format:e.target.value})}><option value="">Любой</option><option value="REMOTE">Удалённо</option><option value="HYBRID">Гибрид</option><option value="ON_SITE">На месте</option></select></label>
       <button className="button">Найти вакансии</button>
     </form>
-    {!data&&!error&&<p role="status">Загружаем вакансии…</p>}
+    {path&&!data&&!error&&<p role="status">Загружаем вакансии…</p>}
     {error&&<div role="alert"><p>{error}</p><button className="button secondary" onClick={retry}>Повторить загрузку</button>{source==='trudvsem'&&<Link className="button secondary" to="/vacancies?source=demo">Открыть демокаталог</Link>}</div>}
     {data&&<>{data.source==='trudvsem'&&<p>Открытые данные портала <a href="https://trudvsem.ru/opendata/api" target="_blank" rel="noreferrer">«Работа России» (Роструд)</a>. Актуальность и условия уточняйте в оригинале вакансии.</p>}{data.filtered_on_page&&<p role="note">Фильтры опыта и формата применены только к загруженной странице (до 20 вакансий). Общий счётчик относится к поиску источника до этих фильтров. На других страницах могут быть дополнительные совпадения.</p>}
       <p className="vacancy-meta">{data.source==='demo'?'Демо':'Работа России'} · Всего в поиске: {data.found} · На странице: {data.items.length} · Получено: {new Date(data.fetched_at).toLocaleString('ru-RU')}</p>
       {data.found>2000&&<p>Для большого списка доступны первые 100 страниц. Уточните текст поиска, чтобы найти нужные вакансии.</p>}
       {data.items.length===0&&<p role="status">На этой странице совпадений нет. Измените фильтры или проверьте следующую страницу.</p>}
-      <div className="vacancy-grid">{data.items.map(item=><article className="vacancy-card" key={item.source+item.id}><SourceLabel source={item.source}/><h2><Link to={`/vacancies/${item.source}/${item.id}?${query}`}>{item.title}</Link></h2><Basics item={item}/><p className="vacancy-skills">{item.skills.join(' · ')||'Ключевые навыки уточняйте в карточке'}</p><small>Опубликовано: {date(item.published_at)}</small><Link className="vacancy-open" to={`/vacancies/${item.source}/${item.id}?${query}`}>Подробнее →</Link></article>)}</div>
+      <div className="vacancy-grid">{rows.map(item=><article className="vacancy-card" key={item.source+item.id}><SourceLabel source={item.source}/><h2><Link to={`/vacancies/${item.source}/${item.id}?${query}`}>{item.title}</Link></h2><Basics item={item}/><p className="vacancy-skills">{item.skills.join(' · ')||'Ключевые навыки уточняйте в карточке'}</p><small>Опубликовано: {date(item.published_at)}</small>{matching?.data&&<MatchExplanation profile={matching.data} vacancy={item}/>}<Link className="vacancy-open" to={`/vacancies/${item.source}/${item.id}?${query}`}>Подробнее →</Link></article>)}</div>
       {data.pages>1&&<nav aria-label="Страницы вакансий" className="vacancy-pagination"><button disabled={page===0} onClick={()=>paginate(page-1)}>Назад</button><span>Страница {page+1} из {data.pages}</span><button disabled={page+1>=data.pages} onClick={()=>paginate(page+1)}>Далее</button></nav>}
     </>}
   </section>;
+}
+function DetailMatching({vacancy}:{vacancy:Vacancy}) {
+  const matching=useMatchingProfile();
+  return matching.data ? <><MatchExplanation profile={matching.data} vacancy={vacancy}/><p className="vacancy-meta">Сравнение упоминаний навыков, а не оценка обязательных требований или вероятности найма. Профиль загружен заново; результат может отличаться после правок.</p></> : <ProfileMatchingError {...matching}/>;
 }
 export function VacancyPage() {
   const {source,vacancyId}=useParams();
@@ -77,7 +103,7 @@ export function VacancyPage() {
   return <section className="vacancies-page"><Link className="vacancy-open" to={'/vacancies'+location.search}>← К списку вакансий</Link>
     {!data&&!error&&<p role="status">Загружаем карточку…</p>}
     {error&&<div role="alert"><p>{error}</p><button className="button secondary" onClick={retry}>Повторить загрузку</button></div>}
-    {data&&<article className="vacancy-detail"><SourceLabel source={data.source}/><h1>{data.title}</h1><Basics item={data}/><p>Опубликовано: {date(data.published_at)}</p><h2>Описание</h2><p className="vacancy-description">{data.description||'Описание отсутствует'}</p><h2>Ключевые навыки</h2><p>{data.skills.join(' · ')||'Не указаны'}</p>
+    {data&&<article className="vacancy-detail"><SourceLabel source={data.source}/><h1>{data.title}</h1><Basics item={data}/><p>Опубликовано: {date(data.published_at)}</p>{new URLSearchParams(location.search).get('match')==='profile'&&<DetailMatching vacancy={data}/>}<h2>Описание</h2><p className="vacancy-description">{data.description||'Описание отсутствует'}</p><h2>Ключевые навыки</h2><p>{data.skills.join(' · ')||'Не указаны'}</p>
       {data.source==='demo'?<p role="note">Демонстрационная вакансия. Компания и условия вымышлены, отклик недоступен.</p>:data.source_url&&/^https:\/\/trudvsem\.ru\/vacancy\/card\/[A-Za-z0-9-]+\/[A-Za-z0-9-]+$/.test(data.source_url)&&<a className="button" href={data.source_url} target="_blank" rel="noreferrer">Открыть оригинал на «Работе России» ↗</a>}
     </article>}
   </section>;
